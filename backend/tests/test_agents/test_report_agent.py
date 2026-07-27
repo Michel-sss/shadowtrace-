@@ -384,6 +384,42 @@ async def test_main_scenario_fifteen_sections_and_key_facts(
 
 
 @pytest.mark.asyncio
+async def test_llm_overview_preserves_false_positive_basis(
+    wm: _FakeWorkingMemory,
+    event_service: _FakeEventService,
+) -> None:
+    event_id = f"evt-report-fp-{uuid4().hex[:8]}"
+    await wm.write(event_id, "triage_result", _main_triage().model_dump(mode="json"))
+    await wm.write(
+        event_id,
+        "false_positive_match",
+        {
+            "recommendation": "close_as_fp",
+            "matched_rule": "ops_change_window_bulk_login",
+            "source": "rule_hook",
+        },
+    )
+    event_service.final_verdicts[event_id] = FinalVerdict.FALSE_POSITIVE
+
+    agent = ReportAgent(
+        llm_client=MockLLMClient(audit_recorder=InMemoryLLMCallAuditRecorder()),
+        working_memory=wm,
+        event_service=event_service,
+    )
+    report = await agent.execute(
+        ReportAgentInput(
+            event_id=event_id,
+            evidence_output=_main_evidence(event_id),
+            risk_assessment=_low_risk(),
+        )
+    )
+
+    overview = next(section for section in report.sections if section.key == "overview")
+    assert "fp_matched_pattern: ops_change_window_bulk_login" in overview.content
+    assert "fp_match_source: rule_hook" in overview.content
+
+
+@pytest.mark.asyncio
 async def test_llm_failure_falls_back_to_template(
     wm: _FakeWorkingMemory,
     event_service: _FakeEventService,

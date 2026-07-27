@@ -48,6 +48,7 @@ _ANALYSIS_KEY_FRAGMENTS = frozenset(
 )
 
 _DISPOSITION_ALLOWED_TOP_LEVEL = frozenset(DispositionCommand.model_fields.keys())
+_NON_ENTITY_TARGET_TYPES = frozenset({"channel", "source_object", "ticket"})
 
 
 class GuardrailMode(StrEnum):
@@ -341,6 +342,8 @@ def _check_entity_target_exists(
     targets: list[str] = []
     for action in actions:
         payload = action if isinstance(action, Action) else Action.model_validate(action)
+        if payload.target_type in _NON_ENTITY_TARGET_TYPES:
+            continue
         if payload.target:
             targets.append(payload.target)
         for key in ("canonical_target", "target", "ip", "hostname", "username", "fqdn"):

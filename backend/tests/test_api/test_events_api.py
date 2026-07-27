@@ -1034,11 +1034,11 @@ async def test_investigate_http_low_risk_polls_to_closed(
 
 
 @pytest.mark.asyncio
-async def test_investigate_high_risk_http_polls_to_approval(
+async def test_investigate_high_risk_http_polls_to_reporting(
     client: TestClient,
     event_service: EventService,
 ) -> None:
-    """High-risk required events pause when terminal writeback needs approval."""
+    """High-risk required events stay at REPORTING when started via HTTP investigate."""
     from app.models.enums import SourceDisposition, SourceObjectKind
     from app.models.source import SourceReference
     from app.services.event_service import IngestableSource
@@ -1074,7 +1074,7 @@ async def test_investigate_high_risk_http_polls_to_approval(
     assert detail["event"]["status"] == "reporting"
 
     report_resp = client.get(f"/api/v1/events/{event_id}/report", headers=_hdr())
-    assert report_resp.status_code == 404
+    assert report_resp.status_code == 200
 
 
 @pytest.mark.asyncio

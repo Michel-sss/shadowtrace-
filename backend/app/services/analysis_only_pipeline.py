@@ -342,7 +342,12 @@ class AnalysisOnlyPipeline:
                 context=TransitionContext(
                     need_investigation=triage_result.need_investigation,
                 ),
-                reason="analysis_pipeline:complete_not_required",
+                reason=build_fp_close_reason(
+                    await self._context_store.get(event_id, "false_positive_match")
+                    if self._context_store is not None
+                    else None,
+                    default="analysis_pipeline:complete_not_required",
+                ),
             )
             await self._persist_analysis_only_complete(event_id)
             return AnalysisOnlyPipelineResult(

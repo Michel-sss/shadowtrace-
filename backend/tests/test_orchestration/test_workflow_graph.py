@@ -153,6 +153,9 @@ class FakeStateMachine:
         self.status = target
         return SimpleNamespace(event_id=event_id, status=target)
 
+    async def get_current_status(self, event_id: str) -> EventStatus:
+        return self.statuses.get(event_id, self.status)
+
 
 class FakeEventService:
     def __init__(self) -> None:
@@ -499,10 +502,7 @@ async def test_required_threat_never_enters_disposition_only() -> None:
         "missing_response_plan_for_required_policy" in f for f in final.get("degraded_flags", [])
     )
     degraded = services["degraded_flags"]
-    assert any(
-        call[3] == "InvestigationGraph"
-        for call in getattr(degraded, "calls", [])
-    )
+    assert any(call[3] == "InvestigationGraph" for call in getattr(degraded, "calls", []))
 
 
 @pytest.mark.asyncio
@@ -688,6 +688,15 @@ def test_required_workflow_services_reject_none(service_name: str) -> None:
 
     with pytest.raises(ValueError, match=service_name):
         build_investigation_graph(_agents(), services)
+
+
+def test_route_after_approval_can_skip_execution_when_plan_is_rejected() -> None:
+    state = _base_state(
+        event_status=EventStatus.REPORTING.value,
+        execution_substate=ExecutionSubstate.NONE.value,
+    )
+
+    assert route_after_approval(state) == ROUTE_REPORT
 
 
 @dataclass

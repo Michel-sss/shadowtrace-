@@ -187,6 +187,39 @@ async def test_entity_target_present_passes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_non_entity_action_target_passes() -> None:
+    guard = OutputGuard(mode=GuardrailMode.ENFORCE)
+    ticket_action = Action(
+        action_id="act-ticket-1",
+        event_id="evt-non-entity-target",
+        plan_revision=1,
+        action_fingerprint="fp-ticket",
+        action_category=ActionCategory.RESPONSE,
+        action_name="Create ticket",
+        tool_name="create_ticket",
+        action_level=ActionLevel.L1,
+        target_type="ticket",
+        target="ticket",
+        execution_owner=ExecutionOwner.DIRECT_TOOL,
+        reason="track response",
+    )
+    plan = ResponsePlan(
+        plan_id="plan-ticket",
+        actions=[ticket_action],
+        strategy_summary="track the response",
+        generated_by=ResponsePlanGeneratedBy.TEMPLATE,
+    )
+
+    result = await guard.validate(
+        "response_agent",
+        plan,
+        {"event_id": "evt-non-entity-target", "entities": EntitySet()},
+    )
+
+    assert result.passed is True
+
+
+@pytest.mark.asyncio
 async def test_warn_only_demotes_quality_blocks_and_returns_sanitized_output() -> None:
     writer = InMemoryGuardViolationWriter()
     guard = OutputGuard(mode=GuardrailMode.WARN_ONLY, violation_writer=writer)

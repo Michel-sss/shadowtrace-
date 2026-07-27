@@ -128,15 +128,37 @@ describe("EventListPage", () => {
   });
 
   it("passes filter params to listEvents", async () => {
-    renderPage("/events?status=closed&severity=critical&page=2&page_size=10");
+    renderPage(
+      "/events?status=closed&severity=critical&event_type=account_anomaly&page=2&page_size=10",
+    );
     await waitFor(() => {
       expect(mockListEvents).toHaveBeenCalledWith(
         expect.objectContaining({
           status: "closed",
           severity: "critical",
+          event_type: "account_anomaly",
           page: 2,
           page_size: 10,
         }),
+      );
+    });
+  });
+
+  it("updates filter when event_type changed", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderPage();
+    await waitFor(() => expect(mockListEvents).toHaveBeenCalled());
+
+    const typeSelect = screen.getByTestId("filter-event-type");
+    await user.click(within(typeSelect).getByRole("combobox"));
+    await waitFor(() => {
+      expect(screen.getByText("主机入侵", { exact: true })).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("主机入侵", { exact: true }));
+
+    await waitFor(() => {
+      expect(mockListEvents).toHaveBeenLastCalledWith(
+        expect.objectContaining({ event_type: "host_compromise", page: 1 }),
       );
     });
   });
@@ -245,10 +267,13 @@ describe("EventListPage", () => {
     });
   });
 
-  it("shows in-progress hint on 409 conflict", async () => {
+  it("shows in-progress hint on 409 investigation_in_progress", async () => {
     const { ApiError } = await import("../../src/services/apiClient");
     mockTriggerInvestigation.mockRejectedValueOnce(
-      new ApiError({ error_code: "conflict", error_message: "Already in progress" }),
+      new ApiError({
+        error_code: "investigation_in_progress",
+        error_message: "Already in progress",
+      }),
     );
     renderPage();
     expect(await screen.findByText("Suspicious login")).toBeInTheDocument();

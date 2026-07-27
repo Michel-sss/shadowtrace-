@@ -135,15 +135,14 @@ export default function EventTable({
         key: "writeback_overall_status",
         width: 170,
         render: (_, record) => {
-          // EventListItem does not carry `external_unsynced` or
-          // `confirmation_evidence` (those live on the detail object).
-          // For the list view we derive "external unsynced" from the
-          // writeback_overall_status: CLOSED + writeback not confirmed =>
-          // external side not synced yet. WritebackBadge handles the
-          // "confirmed but weak evidence" case internally — since we lack
-          // the evidence field on the list item, confirmed always renders
-          // as "已同步（弱证据）", which satisfies the spec's "不得只显示
-          // 绿色成功" requirement.
+          // First-screen degradation (ISSUE-038 / ISSUE-068):
+          // listEvents always returns writeback_overall_status=null and does
+          // not project confirmation_evidence / external_unsynced. Until a
+          // writeback_updated socket event (or a future list-API extension)
+          // supplies status, the badge shows "未写回" / heuristic CLOSED
+          // unsynced. When status is later CONFIRMED without evidence, we
+          // intentionally pass null evidence so WritebackBadge renders
+          // "已同步（弱证据）" instead of plain green success.
           const externalUnsynced =
             record.status === "closed" &&
             record.writeback_required &&

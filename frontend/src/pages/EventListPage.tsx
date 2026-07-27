@@ -84,6 +84,7 @@ export default function EventListPage() {
   itemsRef.current = items;
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
+  const pollIntervalRef = useRef<number | undefined>(undefined);
 
   // ---- Data loading ----------------------------------------------------
   const loadEvents = useCallback(
@@ -158,21 +159,18 @@ export default function EventListPage() {
     // Poll fallback: if socket isn't connected after 5s, start polling.
     const pollCheck = window.setTimeout(() => {
       if (!socketClient.isConnected) {
-        const interval = window.setInterval(() => {
+        pollIntervalRef.current = window.setInterval(() => {
           loadEvents(filtersRef.current);
         }, 10_000);
-        // store on window for cleanup
-        (window as unknown as { __stPoll?: number }).__stPoll = interval;
       }
     }, 5_000);
 
     return () => {
       unsub();
       window.clearTimeout(pollCheck);
-      const w = window as unknown as { __stPoll?: number };
-      if (w.__stPoll) {
-        window.clearInterval(w.__stPoll);
-        w.__stPoll = undefined;
+      if (pollIntervalRef.current !== undefined) {
+        window.clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = undefined;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -224,8 +222,13 @@ export default function EventListPage() {
         );
         message.success(`事件 ${eventId} 已触发研判，进入 ${newStatus}`);
       } catch (err: unknown) {
-        if (err instanceof ApiError && err.error_code === "conflict") {
-          // 409 — investigation already in progress
+        if (
+          err instanceof ApiError &&
+          (err.error_code === "investigation_in_progress" ||
+            err.error_code === "conflict")
+        ) {
+          // 409 — backend uses investigation_in_progress (events.py);
+          // keep conflict as a defensive alias.
           message.warning(
             `事件 ${eventId} 已在研判流程中，请勿重复触发。`,
           );

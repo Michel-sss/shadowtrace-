@@ -268,6 +268,8 @@ def route_after_risk(state: InvestigationState) -> str:
 def route_after_approval(state: InvestigationState) -> str:
     if state.get("execution_substate") == ExecutionSubstate.WAITING_APPROVAL.value:
         return ROUTE_WAIT
+    if state.get("event_status") == EventStatus.REPORTING.value:
+        return ROUTE_REPORT
     return ROUTE_EXECUTE
 
 
@@ -414,11 +416,7 @@ async def build_initial_investigation_state(
     """Build LangGraph initial state from persisted EventContext + event row."""
     context = await context_store.get_full_context(event_id)
     event = context.event
-    policy = (
-        event.disposition_policy
-        if event is not None
-        else DispositionPolicy.NOT_REQUIRED
-    )
+    policy = event.disposition_policy if event is not None else DispositionPolicy.NOT_REQUIRED
     state: InvestigationState = {
         "event_id": event_id,
         "node_trace": [],
@@ -429,12 +427,8 @@ async def build_initial_investigation_state(
         "replan_count": int(context.replan_count or 0),
         "escalated": bool(event.escalated if event is not None else False),
         "disposition_policy": policy.value,
-        "event_status": (
-            event.status.value if event is not None else EventStatus.NEW.value
-        ),
-        "severity": (
-            event.severity.value if event is not None else Severity.MEDIUM.value
-        ),
+        "event_status": (event.status.value if event is not None else EventStatus.NEW.value),
+        "severity": (event.severity.value if event is not None else Severity.MEDIUM.value),
         "final_verdict": (
             event.final_verdict.value
             if event is not None and event.final_verdict is not None
@@ -887,24 +881,31 @@ def build_investigation_graph(
                     },
                 )
             if result.evaluated_count > 0:
-                await runtime.set_execution_substate(
-                    state["event_id"],
-                    ExecutionSubstate.NONE,
-                    event_status=EventStatus.EXECUTING_RESPONSE,
-                )
-                current = EventStatus(state.get("event_status", EventStatus.WAITING_APPROVAL.value))
-                update: dict[str, Any] = {
-                    "execution_substate": ExecutionSubstate.NONE.value,
-                    "plan_revision": plan_revision,
-                }
-                if current is not EventStatus.EXECUTING_RESPONSE:
+                state_machine = cast(_StateMachinePort, services["state_machine"])
+                current = await state_machine.get_current_status(state["event_id"])
+                if current is EventStatus.WAITING_APPROVAL:
                     status = await _transition_status(
                         services,
                         state,
                         EventStatus.EXECUTING_RESPONSE,
                         reason="investigation:approval_decided",
                     )
-                    update.update(status)
+                    current = EventStatus.EXECUTING_RESPONSE
+                else:
+                    status = cast(
+                        InvestigationState,
+                        {"event_status": current.value},
+                    )
+                await runtime.set_execution_substate(
+                    state["event_id"],
+                    ExecutionSubstate.NONE,
+                    event_status=current,
+                )
+                update: dict[str, Any] = {
+                    "execution_substate": ExecutionSubstate.NONE.value,
+                    "plan_revision": plan_revision,
+                }
+                update.update(status)
                 return _patch_state(_trace(NODE_APPROVAL), update)
         if state.get("needs_approval_wait"):
             await runtime.set_execution_substate(
@@ -1379,6 +1380,7 @@ def build_investigation_graph(
         {
             ROUTE_EXECUTE: NODE_EXECUTE,
             ROUTE_WAIT: NODE_APPROVAL_WAIT,
+            ROUTE_REPORT: NODE_REPORT,
         },
     )
     graph.add_edge(NODE_APPROVAL_WAIT, END)

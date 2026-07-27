@@ -277,6 +277,7 @@ class SuperAgent(BaseAgent[SuperAgentInput, AgentOutput]):
         acquired = lease_acquired
         renewal_task: asyncio.Task[None] | None = None
         event_context: EventContext | None = None
+        final_state: dict[str, Any] | None = None
         guard_reset_needed = True  # cleared only when another worker owns the lease
 
         try:
@@ -335,7 +336,8 @@ class SuperAgent(BaseAgent[SuperAgentInput, AgentOutput]):
             if self._investigation_graph is not None:
                 ec = await self._load_event_context(event_id)
             else:
-                ec = final_state.get("event_context", event_context)  # type: ignore[name-defined]
+                assert final_state is not None
+                ec = final_state.get("event_context", event_context)
             await self._persist_event_context(ec)
             await self._persist_analysis_only_complete(event_id)
 

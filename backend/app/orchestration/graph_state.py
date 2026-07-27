@@ -64,3 +64,9 @@ class InvestigationState(TypedDict, total=False):
     escalated: bool
     report_generated: bool
     needs_approval_wait: bool
+    # ISSUE-566: initial HTTP investigate (via build_initial_investigation_state)
+    # defers response/approval/execute/verify; analysis completes at report
+    # (REQUIRED→REPORTING, NOT_REQUIRED→CLOSED). Full P0 response execution
+    # resumes via approval_engine / resume_investigation. Workflow unit tests
+    # pass defer_response_execution=False via _base_state().
+    defer_response_execution: bool

@@ -22,6 +22,7 @@ import EventOverviewCard from "../components/event/EventOverviewCard";
 import EntityList from "../components/event/EntityList";
 import EvidenceList from "../components/event/EvidenceList";
 import RiskScorePanel from "../components/event/RiskScorePanel";
+import EntityGraph from "../components/graph/EntityGraph";
 import { useEventDetail, type EventWriteback } from "../hooks/useEventDetail";
 import type { Action } from "../types/action";
 import type {
@@ -493,7 +494,16 @@ export default function EventDetailPage() {
       label: `调查时间线${traces.length ? `（${traces.length}）` : ""}`,
       children: <Placeholder feature="调查时间线" />,
     },
-    { key: "graph", label: "攻击图谱", children: <Placeholder feature="攻击图谱" /> },
+    {
+      key: "graph",
+      label: "攻击图谱",
+      children: (
+        <EntityGraph
+          eventId={eventId}
+          refreshToken={event.event.updated_at}
+        />
+      ),
+    },
     {
       key: "evidence",
       label: `证据（${evidenceOutput?.evidence_list?.length ?? 0}）`,

@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { EventDetailResponse } from "../../src/types/event";
 
 const mockGetEvent = vi.fn();
+const mockGetGraph = vi.fn();
 const mockGetTraces = vi.fn();
 const mockListActions = vi.fn();
 const mockListDispositions = vi.fn();
@@ -16,6 +17,7 @@ const mockGetWriteback = vi.fn();
 
 vi.mock("../../src/services/eventApi", () => ({
   getEvent: (...args: unknown[]) => mockGetEvent(...args),
+  getGraph: (...args: unknown[]) => mockGetGraph(...args),
   getTraces: (...args: unknown[]) => mockGetTraces(...args),
   listActions: (...args: unknown[]) => mockListActions(...args),
   listDispositions: (...args: unknown[]) => mockListDispositions(...args),
@@ -205,6 +207,39 @@ describe("EventDetailPage", () => {
     vi.clearAllMocks();
     socketHandler = undefined;
     mockGetEvent.mockResolvedValue({ data: makeDetail() });
+    mockGetGraph.mockResolvedValue({
+      data: {
+        nodes: [
+          {
+            node_id: "node-account",
+            event_id: "evt-70",
+            entity_type: "account",
+            entity_value: "alice",
+            properties: {},
+          },
+          {
+            node_id: "node-host",
+            event_id: "evt-70",
+            entity_type: "host",
+            entity_value: "workstation-01",
+            properties: {},
+          },
+        ],
+        edges: [
+          {
+            edge_id: "edge-login",
+            event_id: "evt-70",
+            source_node_id: "node-account",
+            target_node_id: "node-host",
+            relation_type: "logged_in_to",
+            evidence_id: "ev-normal",
+            occurred_at: "2026-07-27T08:00:00Z",
+          },
+        ],
+        central_entities: ["alice"],
+        attack_path_candidates: [["node-account", "node-host"]],
+      },
+    });
     mockGetTraces.mockResolvedValue({
       data: { total: 0, page: 1, page_size: 20, items: [] },
     });
@@ -261,6 +296,15 @@ describe("EventDetailPage", () => {
     await user.click(screen.getByRole("tab", { name: /证据/ }));
     expect(screen.getByTestId("location-hash")).toHaveTextContent("#evidence");
     expect(screen.getByText("异常地理位置登录")).toBeInTheDocument();
+  });
+
+  it("loads the entity graph in the graph tab", async () => {
+    renderPage("/events/evt-70#graph");
+
+    expect(await screen.findByText("实体关系图")).toBeInTheDocument();
+    expect(screen.getByText("2 个节点")).toBeInTheDocument();
+    expect(screen.getByText("1 条关系")).toBeInTheDocument();
+    expect(mockGetGraph).toHaveBeenCalledWith("evt-70");
   });
 
   it("highlights conflicting evidence and exposes its reason", async () => {

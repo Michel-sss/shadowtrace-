@@ -8,6 +8,7 @@ from app.api.v1 import (
     dispositions,
     events,
     execution_jobs,
+    graph,
     health,
     knowledge,
     source_records,
@@ -28,3 +29,4 @@ api_router.include_router(tools.router)
 api_router.include_router(knowledge.router)
 api_router.include_router(stats.router)
 api_router.include_router(trajectory.router)
+api_router.include_router(graph.router)

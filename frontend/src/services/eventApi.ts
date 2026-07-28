@@ -5,6 +5,7 @@ import type {
   EventDetailResponse,
   EventListParams,
   EventListResponse,
+  GraphOutput,
   ConnectorsResponse,
   DispositionListResponse,
   ExecutionJobResponse,
@@ -29,6 +30,10 @@ export function listEvents(params?: EventListParams) {
 
 export function getEvent(eventId: string) {
   return apiClient.get<EventDetailResponse>(`/events/${eventId}`);
+}
+
+export function getGraph(eventId: string) {
+  return apiClient.get<GraphOutput>(`/events/${eventId}/graph`);
 }
 
 export function triggerInvestigation(eventId: string) {

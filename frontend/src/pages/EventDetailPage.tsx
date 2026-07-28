@@ -23,6 +23,7 @@ import EntityList from "../components/event/EntityList";
 import EvidenceList from "../components/event/EvidenceList";
 import RiskScorePanel from "../components/event/RiskScorePanel";
 import StorylineTimeline from "../components/storyline/StorylineTimeline";
+import EventAuditPanel from "../components/audit/EventAuditPanel";
 import { useEventDetail, type EventWriteback } from "../hooks/useEventDetail";
 import type { Action } from "../types/action";
 import type {
@@ -526,7 +527,13 @@ export default function EventDetailPage() {
         />
       ),
     },
-    { key: "audit", label: "审计", children: <Placeholder feature="审计日志" /> },
+    {
+      key: "audit",
+      label: "审计",
+      children: (
+        <EventAuditPanel eventId={eventId} qualityScores={context?.quality_scores} />
+      ),
+    },
     {
       key: "report",
       label: "报告",

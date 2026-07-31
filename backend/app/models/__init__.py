@@ -54,15 +54,6 @@ from app.models.agent_io import (
 )
 from app.models.context import EventContext
 from app.models.decision_trace import DecisionTrace, DecisionTraceEntry, DecisionTraceSummary
-from app.models.embedding import (
-    EmbeddingProviderHealth,
-    EmbeddingRelease,
-    VectorImportUpsert,
-    VectorIndexSchema,
-    VectorQueryContext,
-    VectorQueryFilter,
-    VectorRecordIdentity,
-)
 from app.models.disposition import (
     DispositionCommand,
     DispositionOutboxRecord,
@@ -75,6 +66,15 @@ from app.models.disposition import (
     TargetDispositionResult,
     TargetWritebackResult,
     WritebackSummary,
+)
+from app.models.embedding import (
+    EmbeddingProviderHealth,
+    EmbeddingRelease,
+    VectorImportUpsert,
+    VectorIndexSchema,
+    VectorQueryContext,
+    VectorQueryFilter,
+    VectorRecordIdentity,
 )
 from app.models.entities import (
     AccountEntity,

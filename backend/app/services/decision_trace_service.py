@@ -75,30 +75,62 @@ def _agent_status_verb(status: str) -> str:
 
 
 def _agent_decision_basis(output_data: Any) -> dict[str, Any]:
+    """Return sanitized decision basis; never trust legacy stored CoT (ISSUE-131)."""
     if not isinstance(output_data, dict):
         return {}
+    basis = TraceProjection.decision_basis(output_data)
     stored = output_data.get("_decision_basis")
-    if isinstance(stored, dict) and stored:
-        return stored
-    return TraceProjection.decision_basis(output_data)
+    if not isinstance(stored, dict) or not stored:
+        return basis
+    # Preserve non-conclusion metadata from stored basis, but structured_conclusion
+    # always comes from TraceProjection (decision_summary-first, CoT keys redacted).
+    for key in (
+        "input_summary",
+        "confidence",
+        "evidence_refs",
+        "selected_action",
+        "warnings",
+        "model_name",
+        "model_version",
+        "rule_version",
+        "rules_applied",
+    ):
+        value = stored.get(key)
+        if value in (None, "", [], {}):
+            continue
+        existing = basis.get(key)
+        if existing in (None, "", [], {}) or (
+            key == "input_summary"
+            and isinstance(existing, str)
+            and existing.startswith("keys=")
+        ):
+            basis[key] = value
+    return basis
 
 
 def _agent_title(agent_name: str, status: str, output_data: Any) -> str:
     verb = _agent_status_verb(status)
     action_labels = {
+        "triage_agent": "分诊",
         "TriageAgent": "分诊",
+        "risk_agent": "风险评估",
         "RiskAgent": "风险评估",
+        "evidence_agent": "证据收集",
         "EvidenceAgent": "证据收集",
+        "planner_agent": "计划生成",
         "PlannerAgent": "计划生成",
+        "response_agent": "响应方案",
         "ResponseAgent": "响应方案",
+        "verify_agent": "效果验证",
         "VerifyAgent": "效果验证",
+        "report_agent": "报告生成",
         "ReportAgent": "报告生成",
     }
     label = action_labels.get(agent_name, "执行")
     title = f"{agent_name} {verb}{label}"
 
     basis = _agent_decision_basis(output_data)
-    if agent_name == "TriageAgent" and isinstance(output_data, dict):
+    if agent_name in {"TriageAgent", "triage_agent"} and isinstance(output_data, dict):
         severity = output_data.get("severity")
         if severity is not None:
             return f"{title}：severity={severity}"
@@ -118,7 +150,19 @@ def _agent_detail(row: orm.AgentTrace, inferred: bool) -> dict[str, Any]:
     }
     output_data = row.output_data if isinstance(row.output_data, dict) else {}
     basis = _agent_decision_basis(output_data)
+    compat = TraceProjection.project_for_compat(output_data)
+    for legacy_key in (
+        "thought",
+        "reflection",
+        "rationale",
+        "reasoning",
+        "chain_of_thought",
+        "chain-of-thought",
+    ):
+        if legacy_key in compat:
+            detail[legacy_key] = compat[legacy_key]
     for key in (
+        "input_summary",
         "structured_conclusion",
         "confidence",
         "evidence_refs",
@@ -128,6 +172,7 @@ def _agent_detail(row: orm.AgentTrace, inferred: bool) -> dict[str, Any]:
         "model_version",
         "rule_version",
         "warnings",
+        "decision_record_ref",
     ):
         value = basis.get(key)
         if value not in (None, "", [], {}):
@@ -151,6 +196,9 @@ def _agent_detail(row: orm.AgentTrace, inferred: bool) -> dict[str, Any]:
     ):
         if key in output_data and output_data[key] is not None:
             detail[key] = output_data[key]
+    record_ref = output_data.get("decision_record_ref")
+    if isinstance(record_ref, str) and record_ref.strip():
+        detail["decision_record_ref"] = record_ref.strip()
     return _maybe_inferred_detail(detail, inferred)
 
 
@@ -163,6 +211,8 @@ def _normalize_agent_traces(rows: list[orm.AgentTrace]) -> list[DecisionTraceEnt
     entries: list[DecisionTraceEntry] = []
     for row in rows:
         ts, inferred = _require_ts(row, "started_at", "completed_at")
+        output_data = row.output_data if isinstance(row.output_data, dict) else {}
+        record_ref = output_data.get("decision_record_ref")
         entries.append(
             DecisionTraceEntry(
                 entry_id=_new_entry_id(),
@@ -172,6 +222,9 @@ def _normalize_agent_traces(rows: list[orm.AgentTrace]) -> list[DecisionTraceEnt
                 title=_agent_title(row.agent_name, row.status, row.output_data),
                 detail=_agent_detail(row, inferred),
                 ref_id=row.trace_id,
+                decision_record_ref=(
+                    record_ref.strip() if isinstance(record_ref, str) and record_ref.strip() else None
+                ),
             )
         )
     return entries

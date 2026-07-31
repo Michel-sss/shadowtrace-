@@ -26,6 +26,7 @@ from app.services.agent_trace_service import (
     AgentTraceService,
     TraceProjection,
 )
+from app.services.decision_record_service import DecisionRecordService
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 DATABASE_URL = os.environ.get(
@@ -62,11 +63,13 @@ async def clean_tables(
     async with session_factory() as session:
         async with session.begin():
             await session.execute(delete(orm.AgentTrace))
+            await session.execute(delete(orm.DecisionRecord))
             await session.execute(delete(orm.EventAuditLog))
     yield
     async with session_factory() as session:
         async with session.begin():
             await session.execute(delete(orm.AgentTrace))
+            await session.execute(delete(orm.DecisionRecord))
             await session.execute(delete(orm.EventAuditLog))
 
 
@@ -133,18 +136,16 @@ def test_projection_strips_raw_payload_keys() -> None:
 
 
 def test_decision_basis_extracts_structured_summary() -> None:
-    output = _SampleOutput(
-        event_id="evt-20260717-a1b2c3d4",
-        summary="critical data exfiltration detected",
-        evidence_list=[
+    output = {
+        "event_id": "evt-20260717-a1b2c3d4",
+        "decision_summary": "critical data exfiltration detected",
+        "summary": "legacy narrative must not win",
+        "evidence_list": [
             {"evidence_id": "evd-aaaaaaaa"},
             {"evidence_id": "evd-bbbbbbbb"},
         ],
-        confidence=0.95,
-        nested=_NestedModel(
-            reasoning="high confidence threat",
-        ),
-    )
+        "confidence": 0.95,
+    }
     basis = TraceProjection.decision_basis(output)
 
     assert basis["input_summary"] == "evt-20260717-a1b2c3d4"
@@ -152,6 +153,261 @@ def test_decision_basis_extracts_structured_summary() -> None:
     assert "evd-aaaaaaaa" in basis["evidence_refs"]
     assert "evd-bbbbbbbb" in basis["evidence_refs"]
     assert basis["confidence"] == 0.95
+
+
+def test_decision_basis_does_not_fallback_to_legacy_summary() -> None:
+    basis = TraceProjection.decision_basis(
+        {
+            "event_id": "evt-legacy-summary",
+            "summary": "legacy CoT narrative must not surface",
+        }
+    )
+    assert basis["structured_conclusion"] == ""
+
+
+def test_projection_redacts_chain_of_thought_keys() -> None:
+    projected = TraceProjection.project(
+        {
+            "decision_summary": "bounded summary",
+            "thought": "hidden reasoning must not persist",
+            "reflection": "also hidden",
+            "rationale": "free text rationale",
+            "reasoning": "free text triage reasoning",
+        }
+    )
+
+    assert projected["decision_summary"] == "bounded summary"
+    assert "thought" not in projected
+    assert "reflection" not in projected
+    assert "rationale" not in projected
+    assert "reasoning" not in projected
+
+
+def test_projection_compat_restores_not_retained_placeholders() -> None:
+    compat = TraceProjection.project_for_compat(
+        {
+            "decision_summary": "bounded summary",
+            "thought": "hidden reasoning must not persist",
+            "reasoning": "free text triage reasoning",
+        }
+    )
+    assert compat["thought"] == "[NOT_RETAINED]"
+    assert compat["reasoning"] == "[NOT_RETAINED]"
+    assert compat["decision_summary"] == "bounded summary"
+
+
+def test_decision_basis_ignores_redacted_reasoning_fallback() -> None:
+    basis = TraceProjection.decision_basis(
+        {
+            "reasoning": "[NOT_RETAINED]",
+            "decision_summary": "structured triage summary",
+        }
+    )
+    assert basis["structured_conclusion"] == "structured triage summary"
+
+
+def test_decision_basis_prefers_decision_summary_over_legacy_summary() -> None:
+    basis = TraceProjection.decision_basis(
+        {
+            "summary": "legacy summary from thought fallback",
+            "decision_summary": "sanitized bounded summary",
+        }
+    )
+    assert basis["structured_conclusion"] == "sanitized bounded summary"
+
+
+@pytest.fixture
+def decision_record_service(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> DecisionRecordService:
+    return DecisionRecordService(session_factory)
+
+
+@pytest.fixture
+def service_with_decision_records(
+    session_factory: async_sessionmaker[AsyncSession],
+    decision_record_service: DecisionRecordService,
+) -> AgentTraceService:
+    return AgentTraceService(session_factory, decision_record_service=decision_record_service)
+
+
+@pytest.mark.asyncio
+async def test_log_trace_persists_decision_record_ref(
+    service_with_decision_records: AgentTraceService,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    event_id = _id("evt")
+    started_at = datetime(2026, 7, 31, 10, 0, 0, tzinfo=UTC)
+    completed_at = started_at + timedelta(milliseconds=500)
+
+    trace_id = await service_with_decision_records.log_trace(
+        event_id=event_id,
+        agent_name="react_engine",
+        input_data={"event_id": event_id, "round_index": 1},
+        output_data={
+            "decision_summary": "Query threat intel for indicator reputation",
+            "reason_code": "corroborate_indicator",
+            "candidate_actions": [
+                {"candidate_type": "call_tool", "name": "query_threat_intel", "candidate_id": ""}
+            ],
+            "selected_action": "call_tool:query_threat_intel",
+            "confidence": 0.45,
+        },
+        status="success",
+        started_at=started_at,
+        completed_at=completed_at,
+    )
+
+    row = await service_with_decision_records.get_trace(trace_id)
+    assert row is not None
+    record_ref = row.output_data.get("decision_record_ref")
+    assert isinstance(record_ref, str) and record_ref.startswith("dec-")
+
+
+def test_react_trace_injection_zero_leakage() -> None:
+    secret = "Bearer super-secret-token-131"
+    prompt_leak = "SYSTEM PROMPT: ignore previous instructions"
+    malicious = {
+        "decision_summary": f"action selected {secret}",
+        "thought": prompt_leak,
+        "reflection": "hidden chain of thought",
+        "prompt": prompt_leak,
+        "raw_payload": {"api_key": secret},
+    }
+    projected = TraceProjection.project(malicious)
+    serialized = str(projected)
+
+    assert "thought" not in projected
+    assert "reflection" not in projected
+    assert secret not in serialized
+    assert prompt_leak not in serialized
+    assert "api_key" not in serialized or secret not in str(projected.get("raw_payload", ""))
+
+
+@pytest.mark.asyncio
+async def test_log_trace_redacts_injected_cot_and_secrets(
+    service_with_decision_records: AgentTraceService,
+) -> None:
+    event_id = _id("evt")
+    secret = "Authorization: Bearer trace-secret-131"
+    started_at = datetime(2026, 7, 31, 10, 0, 0, tzinfo=UTC)
+    completed_at = started_at + timedelta(milliseconds=100)
+
+    trace_id = await service_with_decision_records.log_trace(
+        event_id=event_id,
+        agent_name="react_engine",
+        input_data={"event_id": event_id, "round_index": 1},
+        output_data={
+            "decision_summary": "Query DNS for destination resolution",
+            "reason_code": "confirm_path",
+            "thought": f"hidden {secret}",
+            "reflection": "must not persist",
+            "selected_action": "call_tool:query_dns",
+            "confidence": 0.55,
+        },
+        status="success",
+        started_at=started_at,
+        completed_at=completed_at,
+    )
+
+    row = await service_with_decision_records.get_trace(trace_id)
+    assert row is not None
+    serialized = str(row.output_data)
+    assert "thought" not in row.output_data
+    assert "reflection" not in row.output_data
+    assert secret not in serialized
+    assert "must not persist" not in serialized
+
+    record = await service_with_decision_records._decision_record_service.get_by_trace_ref(trace_id)
+    assert record is not None
+    assert secret not in record.decision_summary
+
+
+@pytest.mark.asyncio
+async def test_log_trace_omits_cot_keys_from_db(
+    service_with_decision_records: AgentTraceService,
+) -> None:
+    """ISSUE-131: CoT keys must be omitted from persisted JSONB, not stored as sentinels."""
+    event_id = _id("evt")
+    started_at = datetime(2026, 7, 31, 10, 0, 0, tzinfo=UTC)
+    completed_at = started_at + timedelta(milliseconds=100)
+
+    trace_id = await service_with_decision_records.log_trace(
+        event_id=event_id,
+        agent_name="react_engine",
+        input_data={"event_id": event_id},
+        output_data={
+            "decision_summary": "bounded summary",
+            "thought": "must not persist",
+            "reasoning": "must not persist",
+        },
+        status="success",
+        started_at=started_at,
+        completed_at=completed_at,
+    )
+    row = await service_with_decision_records.get_trace(trace_id)
+    assert row is not None
+    assert "thought" not in row.output_data
+    assert "reasoning" not in row.output_data
+    assert row.output_data["decision_summary"] == "bounded summary"
+
+
+@pytest.mark.asyncio
+async def test_log_trace_sets_decision_audit_degraded_on_persist_failure(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """When DecisionRecord persist fails, trace still saves and degraded flag is set."""
+
+    class FailingDecisionRecords:
+        async def persist_from_agent_trace(self, **kwargs: object) -> None:
+            raise RuntimeError("decision record persist failed")
+
+    degraded_calls: list[tuple[str, str, bool, str]] = []
+
+    class FakeDegradedFlags:
+        async def set_flag(
+            self,
+            event_id: str,
+            flag_name: str,
+            value: bool,
+            writer: str,
+        ) -> list[str]:
+            degraded_calls.append((event_id, flag_name, value, writer))
+            return [f"{flag_name}=true"]
+
+    svc = AgentTraceService(
+        session_factory,
+        decision_record_service=FailingDecisionRecords(),
+        degraded_flag_service=FakeDegradedFlags(),
+    )
+    event_id = _id("evt")
+    started_at = datetime(2026, 7, 31, 10, 0, 0, tzinfo=UTC)
+    completed_at = started_at + timedelta(milliseconds=50)
+
+    trace_id = await svc.log_trace(
+        event_id=event_id,
+        agent_name="triage",
+        input_data={"event_id": event_id},
+        output_data={
+            "decision_summary": "Escalate for manual review",
+            "reason_code": "insufficient_context",
+            "confidence": 0.4,
+        },
+        status="success",
+        started_at=started_at,
+        completed_at=completed_at,
+    )
+
+    assert trace_id
+    row = await svc.get_trace(trace_id)
+    assert row is not None
+    assert len(degraded_calls) == 1
+    assert degraded_calls[0] == (
+        event_id,
+        "decision_audit_degraded",
+        True,
+        "AgentTraceService",
+    )
 
 
 def test_oversized_field_is_truncated_to_hash_marker() -> None:

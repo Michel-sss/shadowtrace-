@@ -671,3 +671,35 @@ def test_0023_retention_upgrade_idempotent_when_column_from_0022(migrated: None)
             await engine.dispose()
 
     asyncio.run(_assert_retention_column_not_nullable())
+
+
+async def test_action_execution_job_idempotency_key_unique(
+    session: AsyncSession,
+) -> None:
+    """ISSUE-220: the DB rejects a second action_execution_job with the same
+    idempotency_key (one authoritative job per key — reclaim can no longer
+    insert a duplicate that re-invokes the Provider)."""
+    sfx = _sfx()
+    event_id = await _seed_event(session, sfx)
+    _, source_record_id = await _seed_connector_source(session, sfx)
+    action_id = await _seed_action(session, event_id, sfx, f"fp-{sfx}")
+
+    def _job(job_id: str, seq: int) -> m.ActionExecutionJob:
+        return m.ActionExecutionJob(
+            job_id=job_id,
+            event_id=event_id,
+            action_id=action_id,
+            provider_name="mock_tool_provider",
+            idempotency_key=f"idem-uq-{sfx}",
+            status="running",
+            claimed_by="worker",
+            lease_expires_at=None,
+            attempt=1,
+        )
+
+    session.add(_job(f"job-a-{sfx}", 1))
+    await session.flush()
+    session.add(_job(f"job-b-{sfx}", 2))
+    with pytest.raises(IntegrityError, match="uq_action_execution_job_idempotency_key"):
+        await session.flush()
+    await session.rollback()

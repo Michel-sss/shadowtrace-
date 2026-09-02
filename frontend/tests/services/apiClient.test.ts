@@ -144,3 +144,23 @@ describe("eventApi", () => {
     );
   });
 });
+
+describe("chatApi", () => {
+  beforeEach(() => {
+    mockPost.mockReset();
+    mockPost.mockResolvedValue({ data: { answer: "ok", references: [] } });
+  });
+
+  it("askEventQuestion waits beyond the 30s Axios default for glm Q&A", async () => {
+    const { askEventQuestion, EVENT_CHAT_TIMEOUT_MS } = await import(
+      "../../src/services/chatApi"
+    );
+    await askEventQuestion("evt-1", { question: "为什么高危", history: [] });
+    expect(EVENT_CHAT_TIMEOUT_MS).toBe(180_000);
+    expect(mockPost).toHaveBeenCalledWith(
+      "/events/evt-1/chat",
+      { question: "为什么高危", history: [] },
+      { timeout: 180_000, skipGlobalErrorToast: true },
+    );
+  });
+});

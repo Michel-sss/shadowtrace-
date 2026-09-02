@@ -19,6 +19,14 @@ _THINK_RE = re.compile(
     r"<(?:think|thinking|reason|reasoning)>.*?</(?:think|thinking|reason|reasoning)>",
     re.DOTALL | re.IGNORECASE,
 )
+_OPEN_THINK_RE = re.compile(
+    r"<(?:think|thinking|reason|reasoning)\b[^>]*>",
+    re.IGNORECASE,
+)
+_CLOSE_THINK_RE = re.compile(
+    r"</(?:think|thinking|reason|reasoning)>",
+    re.IGNORECASE,
+)
 _WRAPPER_KEYS = ("data", "result", "output", "response", "json", "payload", "content")
 
 
@@ -40,6 +48,9 @@ def extract_json_object(text: str) -> dict[str, Any]:
     if text is None:
         raise JsonExtractError("empty completion content", error_class="empty_content")
     stripped = _strip_noise(text)
+    if stripped and "{" not in stripped and "[" not in stripped:
+        # Prose / unclosed think leftovers are empty structured output, not dirty JSON.
+        raise JsonExtractError("empty completion content", error_class="empty_content")
     if not stripped:
         raise JsonExtractError("empty completion content", error_class="empty_content")
 
@@ -89,6 +100,11 @@ def coerce_payload_for_model(
 def _strip_noise(text: str) -> str:
     cleaned = text.lstrip("\ufeff")
     cleaned = _THINK_RE.sub("", cleaned)
+    if _OPEN_THINK_RE.search(cleaned) and not _CLOSE_THINK_RE.search(cleaned):
+        brace = cleaned.find("{")
+        bracket = cleaned.find("[")
+        starts = [index for index in (brace, bracket) if index >= 0]
+        cleaned = cleaned[min(starts) :] if starts else ""
     return cleaned.strip()
 
 

@@ -93,11 +93,11 @@ test.describe("ISSUE-213 · knowledge review page", () => {
 
     await expect(page.getByRole("heading", { name: "知识审核" })).toBeVisible();
     await expect(page.getByTestId("knowledge-review-timing-note")).toContainText(
-      "ISSUE-208",
+      "实体画像",
     );
     await expect(page.getByTestId("candidate-type-profile")).toBeVisible();
     await expect(page.getByText("rev-e2e-profile")).toBeVisible();
-    await expect(page.getByText(/当前均为 profile，符合 CLOSED 前预期/)).toBeVisible();
+    await expect(page.getByText(/当前均为实体画像，符合结案前预期/)).toBeVisible();
   });
 
   test("shows closed-loop types and promotes a review", async ({ page }) => {
@@ -138,7 +138,7 @@ test.describe("ISSUE-213 · knowledge review page", () => {
 
     await expect(page.getByTestId("candidate-type-fp_rule")).toBeVisible();
     await expect(
-      page.getByText(/含须 CLOSED 后入队的 fp_rule \/ history_case/),
+      page.getByText(/含须结案后入队的误报规则 \/ 历史案例/),
     ).toBeVisible();
 
     await page.getByTestId("promote-rev-e2e-profile").click();
@@ -149,14 +149,14 @@ test.describe("ISSUE-213 · knowledge review page", () => {
     await expect(page.getByTestId("candidate-type-fp_rule")).toBeVisible();
   });
 
-  test("empty list explains ISSUE-208 expectation instead of missing feature", async ({
+  test("empty list explains expected timing instead of missing feature", async ({
     page,
   }) => {
     await mockReviewsRoute(page, { total: 0, items: [] });
 
     await page.goto("/knowledge/reviews");
 
-    await expect(page.getByText("当前暂无 pending 候选")).toBeVisible();
+    await expect(page.getByText("当前暂无待审核候选")).toBeVisible();
     await expect(page.getByText(/不代表本页未实现/)).toBeVisible();
   });
 });

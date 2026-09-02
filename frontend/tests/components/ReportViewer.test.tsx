@@ -151,6 +151,38 @@ describe("ReportViewer", () => {
     expect(screen.queryByText("**高风险** 数据外泄")).toBeNull();
   });
 
+  it("does not show schema echo tokens from an LLM placeholder report", () => {
+    render(
+      <ReportViewer
+        report={{
+          ...mockReport,
+          title: "string",
+          summary: "string",
+          sections: [
+            {
+              key: "overview",
+              title: "事件概述",
+              content: "markdown string\ndecision_brief: 事件类型 data_exfiltration。",
+              data: {},
+            },
+            {
+              key: "severity_level",
+              title: "严重级别",
+              content: "markdown string",
+              data: {},
+            },
+          ],
+        }}
+        loading={false}
+        displayContext={{ eventTitle: "Finance endpoint suspected data exfiltration" }}
+      />,
+    );
+    expect(screen.queryByText("markdown string")).toBeNull();
+    expect(screen.queryByText("string", { exact: true })).toBeNull();
+    expect(screen.getByText("Finance endpoint suspected data exfiltration")).toBeDefined();
+    expect(screen.getByText("高")).toBeDefined();
+  });
+
   it("renders all fifteen chapters when present", () => {
     const fullReport = {
       ...mockReport,

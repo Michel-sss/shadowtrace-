@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import StorylineTimeline from "../../src/components/storyline/StorylineTimeline";
 import { PHASE_LABELS } from "../../src/components/storyline/constants";
+import { ApiError } from "../../src/services/apiClient";
 import type {
   AttackStoryline,
   Evidence,
@@ -212,5 +213,23 @@ describe("StorylineTimeline", () => {
     expect(await screen.findByText("故事线未生成")).toBeInTheDocument();
     expect(mockGetTimeline).toHaveBeenCalledWith("evt-070");
     expect(screen.getByTestId("evidence-row-ev-070")).toBeInTheDocument();
+  });
+
+  it("keeps a loaded storyline when a later refresh fails", async () => {
+    mockGetTimeline.mockResolvedValueOnce({ data: makeStoryline() });
+    const { rerender } = render(
+      <StorylineTimeline eventId="evt-070" evidence={evidence} refreshToken="t1" />,
+    );
+    expect(await screen.findByTestId("storyline-timeline")).toBeInTheDocument();
+
+    mockGetTimeline.mockRejectedValueOnce(
+      new ApiError({ error_code: "network_error", error_message: "failed" }),
+    );
+    rerender(
+      <StorylineTimeline eventId="evt-070" evidence={evidence} refreshToken="t2" />,
+    );
+
+    expect(await screen.findByTestId("storyline-timeline")).toBeInTheDocument();
+    expect(screen.queryByText("攻击故事线加载失败")).not.toBeInTheDocument();
   });
 });

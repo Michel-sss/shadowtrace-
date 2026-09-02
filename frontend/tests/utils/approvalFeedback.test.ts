@@ -2,7 +2,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { message } from "antd";
-import { showResumeFeedback } from "../../src/utils/approvalFeedback";
+import { showResumeFeedback, isApprovalTransportTimeout } from "../../src/utils/approvalFeedback";
+import { ApiError } from "../../src/services/apiClient";
 
 describe("showResumeFeedback", () => {
   afterEach(() => {
@@ -63,5 +64,25 @@ describe("showResumeFeedback", () => {
     expect(warning).toHaveBeenCalledWith(
       "动作 act-4 已批准，调查流程暂未继续（租约占用，将自动重试）",
     );
+  });
+});
+
+describe("isApprovalTransportTimeout", () => {
+  it("matches client timeout and network errors", () => {
+    expect(
+      isApprovalTransportTimeout(
+        new ApiError({ error_code: "timeout", error_message: "Request timed out" }),
+      ),
+    ).toBe(true);
+    expect(
+      isApprovalTransportTimeout(
+        new ApiError({ error_code: "network_error", error_message: "Network Error" }),
+      ),
+    ).toBe(true);
+    expect(
+      isApprovalTransportTimeout(
+        new ApiError({ error_code: "forbidden", error_message: "nope" }),
+      ),
+    ).toBe(false);
   });
 });

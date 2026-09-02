@@ -11,6 +11,25 @@ from app.agents.report_section_builder import SECTION_KEYS
 from app.core.llm.base import LLMMessage
 
 
+def _drop_schema_echo(text: str) -> str:
+    """Strip JSON-schema example tokens the model sometimes copies into bodies."""
+    lines: list[str] = []
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if lowered in {"markdown string", "string", "..."}:
+            continue
+        if lowered.startswith("markdown string"):
+            rest = stripped[len("markdown string") :].strip()
+            if rest and rest.lower() not in {"string", "..."}:
+                lines.append(rest)
+            continue
+        lines.append(raw)
+    return "\n".join(lines).strip()
+
+
 class ReportGenerateLLMResponse(BaseModel):
     """Wire model so report_generate repair embeds a real schema."""
 
@@ -23,7 +42,7 @@ class ReportGenerateLLMResponse(BaseModel):
     @field_validator("title", "summary", mode="before")
     @classmethod
     def _coerce_text(cls, value: Any) -> str:
-        return "" if value is None else str(value)
+        return _drop_schema_echo("" if value is None else str(value))
 
     @field_validator("sections", mode="before")
     @classmethod
@@ -32,7 +51,7 @@ class ReportGenerateLLMResponse(BaseModel):
             return {}
         out: dict[str, str] = {}
         for key, item in value.items():
-            text = str(item).strip() if item is not None else ""
+            text = _drop_schema_echo(str(item).strip() if item is not None else "")
             if text:
                 out[str(key)] = text
         return out
@@ -61,7 +80,7 @@ def build_report_messages(
         "response_schema": {
             "title": "string",
             "summary": "string",
-            "sections": {key: "markdown string" for key in SECTION_KEYS},
+            "sections": {key: "concise evidence-grounded markdown" for key in SECTION_KEYS},
         },
     }
     user = (

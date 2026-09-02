@@ -1,7 +1,8 @@
 import { Alert, Button, Card, Skeleton, Space, Tag, Typography } from "antd";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import EvidenceList from "../event/EvidenceList";
 import { getTimeline } from "../../services/eventApi";
+import { ApiError } from "../../services/apiClient";
 import type {
   AttackStoryline,
   Evidence,
@@ -22,6 +23,9 @@ const PHASE_ORDER: StorylinePhaseName[] = [
 type LoadState = "idle" | "loading" | "ready" | "not_ready" | "error";
 
 function isStorylineNotReady(error: unknown): boolean {
+  if (error instanceof ApiError && error.error_code === "storyline_not_ready") {
+    return true;
+  }
   if (!error || typeof error !== "object") return false;
   const response = (error as { response?: { status?: number; data?: unknown } })
     .response;
@@ -83,6 +87,8 @@ export default function StorylineTimeline({
   const [loadState, setLoadState] = useState<LoadState>(
     controlled ? (controlledStoryline ? "ready" : "not_ready") : "idle",
   );
+  const storylineRef = useRef(storyline);
+  storylineRef.current = storyline;
 
   const load = useCallback(async () => {
     if (controlled) {
@@ -94,16 +100,23 @@ export default function StorylineTimeline({
       setLoadState("not_ready");
       return;
     }
-    setLoadState("loading");
+    const hadStoryline = storylineRef.current != null;
+    if (!hadStoryline) setLoadState("loading");
     try {
       const response = await getTimeline(eventId);
       setStoryline(response.data);
       setLoadState("ready");
     } catch (error) {
-      setStoryline(null);
-      setLoadState(isStorylineNotReady(error) ? "not_ready" : "error");
+      const apiError = error as { error_code?: unknown; response?: { status?: number } };
+      const notReady = isStorylineNotReady(error);
+      if (hadStoryline && !notReady) {
+        setLoadState("ready");
+      } else {
+        setStoryline(null);
+        setLoadState(notReady ? "not_ready" : "error");
+      }
     }
-  }, [controlled, controlledStoryline, eventId]);
+  }, [controlled, controlledStoryline, eventId, refreshToken]);
 
   useEffect(() => {
     void load();

@@ -20,7 +20,11 @@ from celery.exceptions import SoftTimeLimitExceeded
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.agents.base import BaseAgent
-from app.agents.prompts.report_prompt import ReportGenerateLLMResponse, build_report_messages
+from app.agents.prompts.report_prompt import (
+    ReportGenerateLLMResponse,
+    _drop_schema_echo,
+    build_report_messages,
+)
 from app.agents.report_llm_failure import llm_failure_metadata
 from app.agents.report_section_builder import (
     ACTIONS_STATUS_SUMMARY_LABEL,
@@ -526,8 +530,8 @@ class ReportAgent(BaseAgent[ReportAgentInput, InvestigationReport]):
         if not isinstance(data, dict):
             raise LLMError("report_generate LLM response is not an object")
 
-        title = str(data.get("title") or "").strip()
-        summary = str(data.get("summary") or "").strip()
+        title = _drop_schema_echo(str(data.get("title") or ""))
+        summary = _drop_schema_echo(str(data.get("summary") or ""))
         sections_raw = data.get("sections") or {}
         if not isinstance(sections_raw, dict):
             raise LLMError("report_generate sections must be an object")
@@ -537,7 +541,7 @@ class ReportAgent(BaseAgent[ReportAgentInput, InvestigationReport]):
             value = sections_raw.get(key)
             if value is None:
                 continue
-            text = str(value).strip()
+            text = _drop_schema_echo(str(value).strip())
             if text:
                 parsed[key] = text
         return title, summary, parsed
@@ -604,8 +608,10 @@ class ReportAgent(BaseAgent[ReportAgentInput, InvestigationReport]):
     ) -> list[ReportSection]:
         merged: list[ReportSection] = []
         for section in base:
-            content = overrides.get(section.key) or section.content
-            if section.key == "overview" and section.key in overrides:
+            raw_override = overrides.get(section.key)
+            usable = _drop_schema_echo(raw_override) if raw_override else ""
+            content = usable or section.content
+            if section.key == "overview" and usable:
                 missing = self._missing_required_lines(
                     section.content,
                     content,
@@ -614,7 +620,7 @@ class ReportAgent(BaseAgent[ReportAgentInput, InvestigationReport]):
                 )
                 if missing:
                     content = "\n".join([content, *missing])
-            elif section.key in {"evidence_chain", "attack_storyline"} and section.key in overrides:
+            elif section.key in {"evidence_chain", "attack_storyline"} and usable:
                 missing = self._missing_required_lines(
                     section.content,
                     content,
@@ -628,7 +634,7 @@ class ReportAgent(BaseAgent[ReportAgentInput, InvestigationReport]):
                 )
                 if missing:
                     content = "\n".join([content, *missing])
-            elif section.key == "executed_actions" and section.key in overrides:
+            elif section.key == "executed_actions" and usable:
                 missing = self._missing_required_lines(
                     section.content,
                     content,
@@ -636,7 +642,7 @@ class ReportAgent(BaseAgent[ReportAgentInput, InvestigationReport]):
                 )
                 if missing:
                     content = "\n".join([content, *missing])
-            elif section.key == "recommendations" and section.key in overrides:
+            elif section.key == "recommendations" and usable:
                 missing = self._missing_required_lines(
                     section.content,
                     content,

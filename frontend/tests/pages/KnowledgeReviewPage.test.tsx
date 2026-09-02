@@ -81,13 +81,14 @@ describe("KnowledgeReviewPage", () => {
     renderPage();
     expect(screen.getByText("知识审核")).toBeInTheDocument();
     const note = await screen.findByTestId("knowledge-review-timing-note");
-    expect(note).toHaveTextContent("ISSUE-208");
-    expect(note).toHaveTextContent("fp_rule / history_case");
+    expect(note).toHaveTextContent("结案前通常只能看到实体画像");
+    expect(note).toHaveTextContent("误报规则和历史案例");
+    expect(note).not.toHaveTextContent("ISSUE-208");
   });
 
   it("shows empty state without pretending feature is missing", async () => {
     renderPage();
-    expect(await screen.findByText("当前暂无 pending 候选")).toBeInTheDocument();
+    expect(await screen.findByText("当前暂无待审核候选")).toBeInTheDocument();
     expect(screen.getByText(/不代表本页未实现/)).toBeInTheDocument();
   });
 
@@ -104,7 +105,7 @@ describe("KnowledgeReviewPage", () => {
     expect(screen.getByText("entity_profile")).toBeInTheDocument();
     expect(screen.getByText("evt-profile-1")).toBeInTheDocument();
     expect(screen.getByText(/account:svc-analytics-47/)).toBeInTheDocument();
-    expect(screen.getByText(/当前均为 profile，符合 CLOSED 前预期/)).toBeInTheDocument();
+    expect(screen.getByText(/当前均为实体画像，符合结案前预期/)).toBeInTheDocument();
   });
 
   it("lists closed-loop candidate types with footer hint", async () => {
@@ -130,7 +131,7 @@ describe("KnowledgeReviewPage", () => {
 
     expect(await screen.findByTestId("candidate-type-fp_rule")).toBeInTheDocument();
     expect(
-      screen.getByText(/含须 CLOSED 后入队的 fp_rule \/ history_case/),
+      screen.getByText(/含须结案后入队的误报规则 \/ 历史案例/),
     ).toBeInTheDocument();
   });
 
@@ -239,7 +240,7 @@ describe("KnowledgeReviewPage", () => {
     expect(await screen.findByText("待审核列表加载失败")).toBeInTheDocument();
     await user.click(screen.getByTestId("knowledge-review-retry"));
     await waitFor(() => expect(mockListMemoryReviews).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText("当前暂无 pending 候选")).toBeInTheDocument();
+    expect(await screen.findByText("当前暂无待审核候选")).toBeInTheDocument();
   });
 
   it("revokes actions after promote returns forbidden", async () => {

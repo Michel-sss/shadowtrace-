@@ -5,7 +5,7 @@ Sections are rendered in the order returned by the backend
 use CHAPTER_KEYS for stable ordering / dedup.
 */
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useMemo } from "react";
 import { Alert, Button, Spin, Typography, Divider } from "antd";
 import { FileTextOutlined, ReloadOutlined } from "@ant-design/icons";
 import type { InvestigationReport, ReportQuality } from "../../types/report";
@@ -13,6 +13,11 @@ import { resolveReportQuality } from "../../types/report";
 import ReportToc from "./ReportToc";
 import ReportExportButtons from "./ReportExportButtons";
 import ReportSectionContent from "./ReportSectionContent";
+import {
+  isSchemaPlaceholder,
+  prepareReportForDisplay,
+  type ReportDisplayContext,
+} from "../../utils/reportDisplay";
 
 const { Title, Text } = Typography;
 
@@ -31,6 +36,8 @@ interface ReportViewerProps {
   report: InvestigationReport | null;
   loading: boolean;
   eventStatus?: string;
+  /** Facts from the live event so schema-echo chapters can be rebuilt. */
+  displayContext?: ReportDisplayContext;
   /** ISSUE-206: on-demand generation (empty state CTA). */
   onGenerate?: () => void;
   /** ISSUE-206: regenerate an existing report (with confirmation upstream). */
@@ -71,6 +78,7 @@ export default function ReportViewer({
   report,
   loading,
   eventStatus,
+  displayContext,
   onGenerate,
   onRegenerate,
   generating = false,
@@ -91,7 +99,12 @@ export default function ReportViewer({
     };
   }, []);
 
-  if (loading) {
+  const displayReport = useMemo(
+    () => (report ? prepareReportForDisplay(report, displayContext) : null),
+    [report, displayContext],
+  );
+
+  if (loading && !displayReport) {
     return (
       <div style={{ textAlign: "center", padding: 48 }}>
         <Spin size="large" />
@@ -102,7 +115,7 @@ export default function ReportViewer({
     );
   }
 
-  if (!report || report.sections.length === 0) {
+  if (!displayReport || displayReport.sections.length === 0) {
     // ISSUE-204/206: REPORTING means analysis is complete but report bytes may
     // not exist yet; generation is allowed only once analysis finished
     // (REPORTING/CLOSED) — never while the investigation is still running.
@@ -131,18 +144,18 @@ export default function ReportViewer({
     );
   }
 
-  const alert = qualityAlert(report);
+  const alert = qualityAlert(displayReport);
 
   return (
     <div data-testid="report-viewer" style={{ display: "flex", gap: 24 }}>
       <div className="shadowtrace-toc">
-        <ReportToc report={report} />
+        <ReportToc report={displayReport} />
       </div>
 
       <div className="shadowtrace-report-viewer" style={{ flex: 1, maxWidth: 800 }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
           <div className="shadowtrace-export-btns">
-            <ReportExportButtons report={report} />
+            <ReportExportButtons report={displayReport} />
           </div>
           {onRegenerate != null &&
             (eventStatus === "reporting" || eventStatus === "closed") && (
@@ -170,17 +183,17 @@ export default function ReportViewer({
 
         <Title level={4}>
           <FileTextOutlined style={{ marginRight: 8 }} />
-          {report.title}
+          {displayReport.title}
         </Title>
         <Text type="secondary">
-          判定：{report.final_verdict} | 风险分：{report.risk_score} | 严重程度：
-          {report.severity}
-          {report.report_quality ? ` | 质量：${report.report_quality}` : ""}
+          判定：{displayReport.final_verdict} | 风险分：{displayReport.risk_score} | 严重程度：
+          {displayReport.severity}
+          {displayReport.report_quality ? ` | 质量：${displayReport.report_quality}` : ""}
         </Text>
 
         <Divider />
 
-        {report.sections.map((section) => (
+        {displayReport.sections.map((section) => (
           <div key={section.key} id={section.key} style={{ marginBottom: 32 }}>
             <Title level={5} id={`${section.key}-title`}>
               {section.title}

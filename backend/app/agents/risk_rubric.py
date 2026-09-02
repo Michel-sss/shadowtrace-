@@ -228,12 +228,16 @@ def land_factor_score(rule_score: float, choice: LlmFactorChoice) -> tuple[float
     if inside:
         merged = IN_BAND_RULE_WEIGHT * rule + IN_BAND_ANCHOR_WEIGHT * choice.anchor
         relation = "在区间内"
+    elif rule < choice.lo:
+        # Weak keyword rules must not drag a high LLM band below the band floor
+        # (lo-8 previously pinned confirmed C2/ransom packs at 50).
+        pulled = OUT_BAND_RULE_WEIGHT * rule + OUT_BAND_EDGE_WEIGHT * choice.anchor
+        merged = min(max(pulled, choice.lo), choice.hi)
+        relation = "区间外软拉"
     else:
-        edge = choice.lo if rule < choice.lo else choice.hi
-        pulled = OUT_BAND_RULE_WEIGHT * rule + OUT_BAND_EDGE_WEIGHT * edge
-        lo_bound = max(0.0, choice.lo - OUT_BAND_MARGIN)
+        pulled = OUT_BAND_RULE_WEIGHT * rule + OUT_BAND_EDGE_WEIGHT * choice.hi
         hi_bound = min(100.0, choice.hi + OUT_BAND_MARGIN)
-        merged = min(max(pulled, lo_bound), hi_bound)
+        merged = min(max(pulled, choice.lo), hi_bound)
         relation = "区间外软拉"
     merged = max(0.0, min(100.0, merged))
     secondary = f" secondary={choice.secondary_rubric_id}" if choice.secondary_rubric_id else ""

@@ -16,6 +16,7 @@ from app.core.llm.base import (
     LLMTimeoutError,
     ProviderResponse,
 )
+from app.core.llm.json_extract import JsonExtractError, extract_json_object
 from app.core.llm.url_utils import normalize_llm_base_url
 
 _REASONING_PART_TYPES = frozenset({"reasoning", "thinking", "reason"})
@@ -57,17 +58,50 @@ def _normalize_message_content(content: Any) -> str:
     raise TypeError("message content must be a string, null, or content parts")
 
 
-def _completion_text(message: dict[str, Any]) -> str:
-    """Prefer visible content; fall back to reasoning fields used by glm thinking."""
-
-    content = _normalize_message_content(message.get("content"))
-    if content.strip():
-        return content
+def _reasoning_text(message: dict[str, Any]) -> str:
     for key in ("reasoning_content", "reasoning", "thinking"):
         alt = message.get(key)
         if isinstance(alt, str) and alt.strip():
             return alt
-    return content
+    return ""
+
+
+def _extractable_json_text(*candidates: str) -> str | None:
+    for candidate in candidates:
+        if not (candidate or "").strip():
+            continue
+        try:
+            extract_json_object(candidate)
+        except JsonExtractError:
+            continue
+        return candidate
+    return None
+
+
+def _completion_text(message: dict[str, Any], *, prefer_json: bool = False) -> str:
+    """Prefer visible content; fall back to reasoning fields used by glm thinking.
+
+    In json_mode, only keep a channel that actually contains a JSON object so
+    think-only dumps become empty_content (retry) instead of invalid_json.
+    """
+
+    content = _normalize_message_content(message.get("content"))
+    reasoning = _reasoning_text(message)
+    if prefer_json:
+        extracted = _extractable_json_text(content, reasoning)
+        if extracted is not None:
+            return extracted
+        if not content.strip():
+            return ""
+        try:
+            extract_json_object(content)
+        except JsonExtractError as exc:
+            if exc.error_class == "empty_content":
+                return ""
+        return content
+    if content.strip():
+        return content
+    return reasoning or content
 
 
 def _should_disable_thinking(*, model_name: str, base_url: str) -> bool:
@@ -131,12 +165,16 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        thinking_requested = False
+        thinking_stripped = False
+        first_http_status: int | None = None
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
             if _should_disable_thinking(model_name=model_name, base_url=self._base_url):
                 # glm-5.x thinking mode leaves content empty / non-JSON; structured
                 # agents need the answer channel, not the chain-of-thought channel.
                 payload["thinking"] = {"type": "disabled"}
+                thinking_requested = True
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
 
         try:
@@ -150,12 +188,14 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
                 "LLM transport failed", details={"model_name": model_name}
             ) from exc
 
+        first_http_status = response.status_code
         if (
             json_mode
             and response.status_code >= 400
             and "thinking" in payload
             and response.status_code not in {401, 403, 429}
         ):
+            thinking_stripped = True
             payload.pop("thinking", None)
             try:
                 response = await self._post_chat(client, payload, headers)
@@ -188,7 +228,16 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
             body = response.json()
             choice = body["choices"][0]
             message = choice["message"]
-            content = _completion_text(message)
+            raw_content = message.get("content")
+            reasoning_alt = next(
+                (
+                    message.get(key)
+                    for key in ("reasoning_content", "reasoning", "thinking")
+                    if isinstance(message.get(key), str) and str(message.get(key)).strip()
+                ),
+                "",
+            )
+            content = _completion_text(message, prefer_json=json_mode)
             finish_reason = choice.get("finish_reason")
             if finish_reason is not None and not isinstance(finish_reason, str):
                 finish_reason = str(finish_reason)
@@ -219,10 +268,14 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         payload: dict[str, Any],
         headers: dict[str, str],
     ) -> httpx.Response:
+        timeout_s = getattr(self, "_active_request_timeout", None)
+        if timeout_s is None:
+            timeout_s = self.timeout_seconds
         return await client.post(
             f"{self._base_url}/chat/completions",
             json=payload,
             headers=headers,
+            timeout=httpx.Timeout(timeout_s),
         )
 
     async def probe_chat(self, *, model_name: str | None = None) -> ProviderResponse:

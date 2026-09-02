@@ -64,6 +64,23 @@ def test_extract_empty_and_think_only_are_empty_content() -> None:
     assert think_only.value.error_class == "empty_content"
 
 
+def test_extract_unclosed_think_without_object_is_empty() -> None:
+    with pytest.raises(JsonExtractError) as exc:
+        extract_json_object("<think>planning the six factors forever")
+    assert exc.value.error_class == "empty_content"
+
+
+def test_extract_prose_without_brace_is_empty() -> None:
+    with pytest.raises(JsonExtractError) as exc:
+        extract_json_object("I will now score this event carefully.")
+    assert exc.value.error_class == "empty_content"
+
+
+def test_extract_unclosed_think_then_object() -> None:
+    raw = '<think>planning without close\n{"ok": true}'
+    assert extract_json_object(raw) == {"ok": True}
+
+
 def test_extract_non_object_is_invalid() -> None:
     with pytest.raises(JsonExtractError) as exc:
         extract_json_object("not-json{{{")

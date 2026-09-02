@@ -20,6 +20,7 @@ from app.agents.risk_scoring_engine import (
     SOURCE_BASELINE_FLOOR_RATIO,
     RiskScoringEngine,
     apply_evidence_limited_adjustments,
+    apply_llm_unavailable_source_floor,
     apply_versioned_confidence_cap,
     extract_source_baseline,
     factor_weights_for,
@@ -452,6 +453,106 @@ def test_rule_engine_all_zero_baseline() -> None:
     assert scores["threat_intel"][0] <= 25.0
     merged = sum(scores[name][0] * FACTOR_WEIGHTS[name] for name in FACTOR_WEIGHTS)
     assert merged < 30.0
+
+
+def test_rule_engine_hits_beacon_and_rdp_signals() -> None:
+    engine = RiskScoringEngine()
+    event_id = f"evt-{uuid4().hex[:8]}"
+    host = EvidenceOutput(
+        evidence_list=[
+            _evd(
+                source=EvidenceSource.ENDPOINT,
+                evidence_type="process_create",
+                confidence=0.9,
+                event_id=event_id,
+                description="process_create：beacon.exe",
+                raw={"process": "beacon.exe", "action": "process_create"},
+            ),
+            _evd(
+                source=EvidenceSource.NETWORK_FLOW,
+                evidence_type="network_connect",
+                confidence=0.9,
+                event_id=event_id,
+                description="network_connect：beacon.exe",
+                raw={"process": "beacon.exe", "dst_ip": "198.51.100.55", "dst_port": "443"},
+            ),
+        ],
+        overall_confidence=0.96,
+        collection_status=CollectionStatus.COMPLETED,
+    )
+    host_scores = engine.score(
+        triage_result=TriageResult(
+            event_type=EventType.HOST_COMPROMISE,
+            severity=Severity.HIGH,
+            need_investigation=True,
+        ),
+        evidence_output=host,
+    )
+    assert host_scores["behavior_anomaly"][0] >= 60.0
+    assert "beacon" in host_scores["behavior_anomaly"][1]
+
+    lateral = EvidenceOutput(
+        evidence_list=[
+            _evd(
+                source=EvidenceSource.ENDPOINT,
+                evidence_type="process_create",
+                confidence=0.9,
+                event_id=event_id,
+                description="process_create：mstsc.exe",
+                raw={
+                    "process": "mstsc.exe",
+                    "action": "process_create",
+                    "dst_port": 3389,
+                    "protocol": "rdp",
+                },
+            )
+        ],
+        overall_confidence=0.83,
+        collection_status=CollectionStatus.COMPLETED,
+    )
+    lateral_scores = engine.score(
+        triage_result=TriageResult(
+            event_type=EventType.LATERAL_MOVEMENT,
+            severity=Severity.HIGH,
+            need_investigation=True,
+        ),
+        evidence_output=lateral,
+    )
+    assert lateral_scores["behavior_anomaly"][0] >= 70.0
+    assert "mstsc" in lateral_scores["behavior_anomaly"][1]
+
+
+def test_llm_invalid_high_baseline_floors_without_evidence_limited() -> None:
+    score, applied = apply_llm_unavailable_source_floor(
+        risk_score=54,
+        scoring_mode=ScoringMode.RULE_ONLY,
+        llm_admissibility=LlmAdmissibility.INVALID,
+        source_snapshot={"normalized": {"risk_score": 78}},
+        possible_false_positive=False,
+    )
+    assert applied is True
+    assert score >= 70
+
+
+def test_llm_invalid_does_not_floor_low_baseline_or_fp() -> None:
+    score, applied = apply_llm_unavailable_source_floor(
+        risk_score=50,
+        scoring_mode=ScoringMode.RULE_ONLY,
+        llm_admissibility=LlmAdmissibility.INVALID,
+        source_snapshot={"severity": "medium", "normalized": {"risk_score": 18}},
+        possible_false_positive=False,
+    )
+    assert applied is False
+    assert score == 50
+    score_fp, applied_fp = apply_llm_unavailable_source_floor(
+        risk_score=50,
+        scoring_mode=ScoringMode.RULE_ONLY,
+        llm_admissibility=LlmAdmissibility.INVALID,
+        source_snapshot=_malicious_process_source_snapshot(),
+        possible_false_positive=True,
+    )
+    assert applied_fp is False
+    assert score_fp == 50
 
 
 def test_rule_engine_saturated_scores_reach_high_risk() -> None:

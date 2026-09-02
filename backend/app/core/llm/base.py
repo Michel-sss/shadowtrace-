@@ -319,6 +319,7 @@ _EMPTY_CONTENT_RETRY_HINT = LLMMessage(
 _STRUCTURED_OUTPUT_MAX_TOKEN_CAP = 8192
 _EMPTY_CONTENT_RETRIES = 1
 _LENGTH_TRUNCATION_RETRIES = 1
+_REPAIR_INVALID_CONTENT_MAX = 512
 
 
 def estimate_tokens(text: str) -> int:
@@ -657,14 +658,18 @@ class BaseLLMClient(ABC):
                 await self._check_budget(event_id=event_id, agent_name=agent_name)
                 try:
                     effective_timeout = timeout if timeout is not None else self.timeout_seconds
-                    async with asyncio.timeout(effective_timeout):
-                        raw = await self._request(
-                            messages,
-                            model_name=model_name,
-                            temperature=temperature,
-                            max_tokens=max_tokens,
-                            json_mode=json_mode,
-                        )
+                    self._active_request_timeout = effective_timeout
+                    try:
+                        async with asyncio.timeout(effective_timeout):
+                            raw = await self._request(
+                                messages,
+                                model_name=model_name,
+                                temperature=temperature,
+                                max_tokens=max_tokens,
+                                json_mode=json_mode,
+                            )
+                    finally:
+                        self._active_request_timeout = None
                 except TimeoutError as exc:
                     raise LLMTimeoutError(
                         "LLM request timed out",
@@ -708,8 +713,7 @@ class BaseLLMClient(ABC):
                     status = "llm_provider_error"
                     error = LLMProviderError("LLM post-processing failed")
                     error.__cause__ = exc
-
-            await _persist_attempt_audit()
+                await _persist_attempt_audit()
             if error is not None:
                 raise error
             assert raw is not None
@@ -743,18 +747,19 @@ class BaseLLMClient(ABC):
         schema = (
             response_model.model_json_schema() if response_model is not None else {"type": "object"}
         )
+        clipped = (invalid_content or "")[:_REPAIR_INVALID_CONTENT_MAX]
         repair = LLMMessage(
             role="user",
             content=(
                 "Return corrected JSON only. The previous output was invalid.\n"
                 f"Validation error: {validation_error}\n"
                 f"Required schema: {json.dumps(schema, ensure_ascii=False, sort_keys=True)}\n"
-                f"Invalid output: {invalid_content}"
+                f"Invalid output: {clipped}"
             ),
         )
         repaired_messages = [
             *messages,
-            LLMMessage(role="assistant", content=invalid_content),
+            LLMMessage(role="assistant", content=clipped),
             repair,
         ]
         return await self._attempt(

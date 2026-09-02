@@ -132,6 +132,94 @@ export function shouldProtectLiveSocketState(
   );
 }
 
+function parseTraceInstantMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function traceEndMs(trace: AgentTrace): number | null {
+  const completed = parseTraceInstantMs(trace.completed_at);
+  if (completed != null) return completed;
+  const started = parseTraceInstantMs(trace.started_at);
+  if (started == null) return null;
+  if (typeof trace.duration_ms === "number" && Number.isFinite(trace.duration_ms)) {
+    return started + Math.max(0, trace.duration_ms);
+  }
+  return started;
+}
+
+/**
+ * Instant ``super_agent`` row written at investigate start for ISSUE-103
+ * ``workflow_path`` (started_at === completed_at, duration 0). Production
+ * ``investigate()`` does not persist a later wall-clock SuperAgent trace, so
+ * the card must not treat this bookmark as orchestration duration.
+ */
+export function isOrchestrationBookmark(trace: AgentTrace): boolean {
+  if (trace.agent_name !== "super_agent") return false;
+  if (trace.status !== "completed" && trace.status !== "failed") return false;
+
+  const output = trace.output_data;
+  const hasWorkflowPath =
+    output != null &&
+    typeof output === "object" &&
+    typeof (output as { workflow_path?: unknown }).workflow_path === "string";
+
+  const duration = trace.duration_ms;
+  const zeroDuration =
+    duration == null || (Number.isFinite(duration) && duration <= 0);
+  const started = parseTraceInstantMs(trace.started_at);
+  const completed = parseTraceInstantMs(trace.completed_at);
+  const instant =
+    started != null && completed != null && started === completed;
+
+  return zeroDuration && (hasWorkflowPath || instant || completed == null);
+}
+
+function preferPositiveDuration(
+  current: number | null,
+  incoming: number | null | undefined,
+): number | null {
+  const a = current != null && current > 0 ? current : null;
+  const b =
+    incoming != null && Number.isFinite(incoming) && incoming > 0 ? incoming : null;
+  if (a == null) return b;
+  if (b == null) return a;
+  return Math.max(a, b);
+}
+
+/** Wall-clock span of specialist agents (bookmark SuperAgent rows excluded). */
+export function deriveOrchestrationDurationMs(
+  traces: AgentTrace[],
+): number | null {
+  const specialists = traces.filter((trace) => {
+    const name = trace.agent_name as AgentName;
+    return (
+      name !== "super_agent" &&
+      ALL_AGENT_NAMES.includes(name) &&
+      parseTraceInstantMs(trace.started_at) != null
+    );
+  });
+  if (specialists.length === 0) return null;
+
+  const bookmarkStart = traces
+    .filter(isOrchestrationBookmark)
+    .map((trace) => parseTraceInstantMs(trace.started_at))
+    .find((ms): ms is number => ms != null);
+
+  const startCandidates = specialists
+    .map((trace) => parseTraceInstantMs(trace.started_at))
+    .filter((ms): ms is number => ms != null);
+  if (bookmarkStart != null) startCandidates.push(bookmarkStart);
+  const endCandidates = specialists
+    .map(traceEndMs)
+    .filter((ms): ms is number => ms != null);
+  if (startCandidates.length === 0 || endCandidates.length === 0) return null;
+
+  const duration = Math.max(...endCandidates) - Math.min(...startCandidates);
+  return duration > 0 ? duration : null;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Activity feed                                                     */
 /* ------------------------------------------------------------------ */
@@ -433,34 +521,54 @@ export const useAgentStatusStore = create<AgentStatusState>((set, get) => ({
       if (!ALL_AGENT_NAMES.includes(name)) continue;
 
       const info = agents[name];
+      const bookmark = isOrchestrationBookmark(trace);
 
       if (trace.status === "completed") {
         info.status = "COMPLETED";
         info.message = "执行完成";
         info.progress_percent = 100;
-        info.started_at = trace.started_at;
-        info.completed_at = trace.completed_at;
-        info.duration_ms = trace.duration_ms;
         info.error_detail = null;
+        if (bookmark) {
+          if (!info.started_at) info.started_at = trace.started_at;
+        } else {
+          info.started_at = trace.started_at;
+          info.completed_at = trace.completed_at;
+          info.duration_ms = preferPositiveDuration(
+            info.duration_ms,
+            trace.duration_ms,
+          );
+        }
       } else if (trace.status === "failed") {
         info.status = "FAILED";
         info.message = trace.error_detail ?? "执行失败";
         info.progress_percent = null;
-        info.started_at = trace.started_at;
-        info.completed_at = trace.completed_at;
-        info.duration_ms = trace.duration_ms;
         info.error_detail = trace.error_detail;
+        if (bookmark) {
+          if (!info.started_at) info.started_at = trace.started_at;
+        } else {
+          info.started_at = trace.started_at;
+          info.completed_at = trace.completed_at;
+          info.duration_ms = preferPositiveDuration(
+            info.duration_ms,
+            trace.duration_ms,
+          );
+        }
       } else if (trace.status === "processing") {
         info.status = "PROCESSING";
         info.message = "处理中（历史记录）";
         info.started_at = trace.started_at;
       }
 
-      // Build a feed entry for each trace.
+      if (bookmark) continue;
+
       const label = AGENT_LABELS[name] ?? name;
+      const feedDuration =
+        trace.duration_ms != null && trace.duration_ms > 0
+          ? `（${trace.duration_ms}ms）`
+          : "";
       const feedMsg =
         trace.status === "completed"
-          ? `${label} 执行完成${trace.duration_ms != null ? `（${trace.duration_ms}ms）` : ""}`
+          ? `${label} 执行完成${feedDuration}`
           : trace.status === "failed"
             ? `${label} 执行失败：${trace.error_detail ?? "未知错误"}`
             : `${label} 处理中（历史记录）`;
@@ -470,6 +578,28 @@ export const useAgentStatusStore = create<AgentStatusState>((set, get) => ({
         agent_name: name,
         message: feedMsg,
       });
+    }
+
+    const superAgent = agents.super_agent;
+    if (
+      (superAgent.status === "COMPLETED" || superAgent.status === "FAILED") &&
+      (superAgent.duration_ms == null || superAgent.duration_ms <= 0)
+    ) {
+      const derived = deriveOrchestrationDurationMs(sorted);
+      if (derived != null) {
+        superAgent.duration_ms = derived;
+        const started = parseTraceInstantMs(superAgent.started_at);
+        if (started != null) {
+          superAgent.completed_at = new Date(started + derived).toISOString();
+        }
+        const label = AGENT_LABELS.super_agent;
+        feed.push({
+          id: ++feedIdCounter,
+          timestamp: superAgent.completed_at ?? superAgent.started_at ?? new Date().toISOString(),
+          agent_name: "super_agent",
+          message: `${label} 执行完成（${derived}ms）`,
+        });
+      }
     }
 
     // Preserve live socket statuses not yet reflected in traces (trace is

@@ -38,6 +38,7 @@ describe("approvalStore", () => {
       eventScope: null,
       _eventGen: 0,
       _queueGen: 0,
+      _queueHydrated: false,
       _pollTimer: null,
       _globalSocketUnsub: null,
       _eventIds: [],
@@ -793,5 +794,21 @@ describe("approvalStore", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("does not take over the page spinner on a silent poll after hydrate", async () => {
+    vi.mocked(listActions).mockResolvedValue({
+      data: { total: 0, page: 1, page_size: 200, items: [] },
+    } as never);
+    useApprovalStore.setState({
+      pendingApprovals: [],
+      loading: false,
+      _queueHydrated: true,
+    });
+    const pending = new Promise<never>(() => undefined);
+    vi.mocked(listActions).mockReturnValueOnce(pending as never);
+
+    void useApprovalStore.getState().loadPendingApprovals(["evt-1"], { silent: true });
+    expect(useApprovalStore.getState().loading).toBe(false);
   });
 });

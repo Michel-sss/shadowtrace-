@@ -71,11 +71,15 @@ export function patchEventClassification(
 }
 
 export function getTimeline(eventId: string) {
-  return apiClient.get<AttackStoryline>(`/events/${eventId}/timeline`);
+  return apiClient.get<AttackStoryline>(`/events/${eventId}/timeline`, {
+    skipGlobalErrorToast: true,
+  });
 }
 
 export function getGraph(eventId: string) {
-  return apiClient.get<GraphOutput>(`/events/${eventId}/graph`);
+  return apiClient.get<GraphOutput>(`/events/${eventId}/graph`, {
+    skipGlobalErrorToast: true,
+  });
 }
 
 export function getEventEvidence(eventId: string) {
@@ -149,6 +153,7 @@ export function generateReport(
 export function getTraces(eventId: string) {
   return apiClient.get<{ total: number; page: number; page_size: number; items: AgentTrace[] }>(
     `/events/${eventId}/traces`,
+    { params: { page: 1, page_size: 100 } },
   );
 }
 

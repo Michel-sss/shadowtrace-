@@ -5,6 +5,8 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import type { AgentTrace } from "../../src/types/trace";
 import {
   ALL_AGENT_NAMES,
+  deriveOrchestrationDurationMs,
+  isOrchestrationBookmark,
   useAgentStatusStore,
 } from "../../src/stores/agentStatusStore";
 
@@ -554,5 +556,122 @@ describe("AgentStatusPanel", () => {
         "aria-expanded",
       ),
     ).toBe("false");
+  });
+
+  it("does not treat the super_agent workflow bookmark as 0ms orchestration time", () => {
+    const bookmark = makeTrace({
+      trace_id: "trc-super-bookmark",
+      agent_name: "super_agent",
+      status: "completed",
+      duration_ms: 0,
+      started_at: "2026-07-28T10:00:00.000Z",
+      completed_at: null,
+      output_data: { workflow_path: "full_loop" },
+    });
+    const triage = makeTrace({
+      trace_id: "trc-triage",
+      agent_name: "triage_agent",
+      status: "completed",
+      duration_ms: 15_000,
+      started_at: "2026-07-28T10:00:01.000Z",
+      completed_at: "2026-07-28T10:00:16.000Z",
+    });
+    const report = makeTrace({
+      trace_id: "trc-report",
+      agent_name: "report_agent",
+      status: "completed",
+      duration_ms: 140_000,
+      started_at: "2026-07-28T10:02:00.000Z",
+      completed_at: "2026-07-28T10:04:20.000Z",
+    });
+
+    expect(isOrchestrationBookmark(bookmark)).toBe(true);
+    expect(isOrchestrationBookmark(triage)).toBe(false);
+    expect(deriveOrchestrationDurationMs([bookmark, triage, report])).toBe(
+      4 * 60 * 1000 + 20 * 1000,
+    );
+
+    act(() => {
+      useAgentStatusStore.getState().replayFromTraces([bookmark, triage, report]);
+    });
+
+    const superAgent = useAgentStatusStore.getState().agents.super_agent;
+    expect(superAgent.status).toBe("COMPLETED");
+    expect(superAgent.duration_ms).toBe(260_000);
+    expect(superAgent.duration_ms).not.toBe(0);
+
+    const feed = useAgentStatusStore.getState().feed;
+    expect(feed.some((entry) => entry.message.includes("（0ms）"))).toBe(false);
+    expect(
+      feed.some(
+        (entry) =>
+          entry.agent_name === "super_agent" &&
+          entry.message.includes("（260000ms）"),
+      ),
+    ).toBe(true);
+  });
+
+  it("derives orchestration duration from list-API traces without completed_at", () => {
+    const bookmark = makeTrace({
+      trace_id: "trc-super-list",
+      agent_name: "super_agent",
+      status: "completed",
+      duration_ms: 0,
+      started_at: "2026-07-28T10:00:00.000Z",
+      completed_at: null,
+      output_data: null,
+    });
+    const risk = makeTrace({
+      trace_id: "trc-risk",
+      agent_name: "risk_agent",
+      status: "completed",
+      duration_ms: 123_000,
+      started_at: "2026-07-28T10:01:00.000Z",
+      completed_at: null,
+    });
+
+    act(() => {
+      useAgentStatusStore.getState().replayFromTraces([bookmark, risk]);
+    });
+
+    expect(useAgentStatusStore.getState().agents.super_agent.duration_ms).toBe(
+      183_000,
+    );
+  });
+
+  it("keeps a real super_agent duration instead of the 0ms bookmark", () => {
+    act(() => {
+      useAgentStatusStore.getState().replayFromTraces([
+        makeTrace({
+          trace_id: "trc-bookmark",
+          agent_name: "super_agent",
+          status: "completed",
+          duration_ms: 0,
+          started_at: "2026-07-28T10:00:00.000Z",
+          completed_at: "2026-07-28T10:00:00.000Z",
+          output_data: { workflow_path: "full_loop" },
+        }),
+        makeTrace({
+          trace_id: "trc-super-real",
+          agent_name: "super_agent",
+          status: "completed",
+          duration_ms: 42_000,
+          started_at: "2026-07-28T10:00:00.000Z",
+          completed_at: "2026-07-28T10:00:42.000Z",
+        }),
+        makeTrace({
+          trace_id: "trc-triage",
+          agent_name: "triage_agent",
+          status: "completed",
+          duration_ms: 5_000,
+          started_at: "2026-07-28T10:00:01.000Z",
+          completed_at: "2026-07-28T10:00:06.000Z",
+        }),
+      ]);
+    });
+
+    expect(useAgentStatusStore.getState().agents.super_agent.duration_ms).toBe(
+      42_000,
+    );
   });
 });

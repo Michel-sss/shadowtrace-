@@ -23,6 +23,7 @@ import { resolveWritebackReceiptDisplay } from "../utils/actionWritebackDisplay"
 import { triageContextFromSnapshot } from "../utils/evidenceContext";
 import ReportViewer from "../components/report/ReportViewer";
 import { coerceInvestigationReport } from "../types/report";
+import type { ReportDisplayContext } from "../utils/reportDisplay";
 import { ApiError } from "../services/apiClient";
 import { generateReport } from "../services/eventApi";
 import EventOverviewCard from "../components/event/EventOverviewCard";
@@ -56,7 +57,7 @@ import {
   type ApprovalDecisionBody,
 } from "../stores/approvalStore";
 import { isApprovalUiDisabled } from "../config/auth";
-import { showResumeFeedback } from "../utils/approvalFeedback";
+import { showResumeFeedback, isApprovalTransportTimeout } from "../utils/approvalFeedback";
 import {
   CLOSED_MEMORY_REVIEW_POLL_MS,
   countPendingMemoryReviewsForEvent,
@@ -616,33 +617,25 @@ export default function EventDetailPage() {
   };
 
   const handleApprovalConfirm = async (actionId: string, body: ApprovalDecisionBody) => {
-    setApprovalSubmitting(true);
+    const mode = approvalModal.mode;
+    // Close the confirm dialog immediately — last L2+ approve waits on
+    // execute/verify and must not pin confirmLoading on the modal.
+    setApprovalModal({ open: false, actionId: null, mode: "approve" });
+    setApprovalSubmitting(false);
+    setDecidedActionIds((prev) => ({ ...prev, [actionId]: true }));
     try {
       const result =
-        approvalModal.mode === "approve"
-          ? await approve(actionId, body)
-          : await reject(actionId, body);
-      setApprovalModal({ open: false, actionId: null, mode: "approve" });
-      setDecidedActionIds((prev) => ({ ...prev, [actionId]: true }));
-      showResumeFeedback(actionId, approvalModal.mode, result);
-      // Locked refresh (ISSUE-207): re-pull the actions table (ActionsPanel data
-      // source) and the event so the todo bar recomputes — not just a toast.
+        mode === "approve" ? await approve(actionId, body) : await reject(actionId, body);
+      showResumeFeedback(actionId, mode, result);
       const [actionsRefresh, eventRefresh] = await Promise.all([
         refresh("actions"),
         refresh("event"),
       ]);
       if (!actionsRefresh.actionsOk || !eventRefresh.eventOk) {
-        // Approval itself succeeded; only the re-sync failed — surface it as a
-        // refresh problem, never as an approval failure (ISSUE-207 review).
         message.warning("审批已成功，但页面刷新失败，请手动刷新查看最新状态。");
       }
     } catch (err: unknown) {
       if (err instanceof ApiError && err.error_code === "approval_decision_conflict") {
-        // Another approver already decided this action: mark it locally decided
-        // BEFORE re-syncing so a failed refresh cannot leave a stale approve
-        // button behind for more 409s (ISSUE-207 review).
-        setApprovalModal({ open: false, actionId: null, mode: "approve" });
-        setDecidedActionIds((prev) => ({ ...prev, [actionId]: true }));
         const [actionsRefresh, eventRefresh] = await Promise.all([
           refresh("actions"),
           refresh("event"),
@@ -656,16 +649,29 @@ export default function EventDetailPage() {
         return;
       }
       if (err instanceof ApiError && err.error_code === "forbidden") {
+        setDecidedActionIds((prev) => {
+          const next = { ...prev };
+          delete next[actionId];
+          return next;
+        });
         message.error("无审批权限（403）：需要 approver 角色，请联系管理员授权。");
-      } else if (err instanceof ApiError) {
+        return;
+      }
+      if (isApprovalTransportTimeout(err)) {
+        message.warning("批准已提交，后台仍在执行。页面将刷新，请以刷新后的状态为准。");
+        await Promise.all([refresh("actions"), refresh("event")]);
+        return;
+      }
+      setDecidedActionIds((prev) => {
+        const next = { ...prev };
+        delete next[actionId];
+        return next;
+      });
+      if (err instanceof ApiError) {
         message.error(err.message || err.error_code || "审批操作失败");
       } else {
         message.error("审批操作失败");
       }
-      // Re-throw so ApprovalActionModal keeps the reject reason / comment (ISSUE-207).
-      throw err;
-    } finally {
-      setApprovalSubmitting(false);
     }
   };
 
@@ -824,6 +830,12 @@ export default function EventDetailPage() {
   const triageContext =
     evidenceDetail?.triage_context ?? triageContextFromSnapshot(context) ?? null;
   const writebackSummary = context?.writeback_summary;
+  const reportDisplayContext: ReportDisplayContext = {
+    eventTitle: event.event.title,
+    entities: event.event.entities,
+    storylineSummary: context?.storyline?.narrative_summary ?? null,
+    actions,
+  };
 
   const sourceContent = (
     <Row gutter={[16, 16]}>
@@ -1029,8 +1041,9 @@ export default function EventDetailPage() {
       children: (
         <ReportViewer
           report={report ?? coerceInvestigationReport(context?.report)}
-          loading={loading}
+          loading={loading && !report}
           eventStatus={event.event.status}
+          displayContext={reportDisplayContext}
           onGenerate={() => void handleGenerateReport()}
           onRegenerate={() => setRegenerateOpen(true)}
           generating={reportGenerating}

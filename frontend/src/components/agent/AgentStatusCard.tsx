@@ -12,7 +12,7 @@ interface Props {
 }
 
 function formatDuration(ms: number | null): string | null {
-  if (ms == null || !Number.isFinite(ms)) return null;
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return null;
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
 }

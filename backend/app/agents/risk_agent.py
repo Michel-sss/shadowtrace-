@@ -20,6 +20,7 @@ from app.agents.risk_rubric import LlmFactorChoice, land_factor_score, resolve_f
 from app.agents.risk_scoring_engine import (
     RiskScoringEngine,
     apply_evidence_limited_adjustments,
+    apply_llm_unavailable_source_floor,
     augment_factors_for_evidence_limited,
     factor_weights_for,
     severity_from_score,
@@ -187,6 +188,17 @@ class RiskAgent(BaseAgent[RiskAgentInput, RiskAssessment]):
             and input.rag_output.fp_similarity.max_score >= 0.7
         )
 
+        floored_score, llm_source_floor_applied = apply_llm_unavailable_source_floor(
+            risk_score=risk_score,
+            scoring_mode=scoring_mode,
+            llm_admissibility=llm_admissibility,
+            source_snapshot=source_snapshot,
+            possible_false_positive=possible_fp,
+        )
+        if llm_source_floor_applied:
+            risk_score = floored_score
+            severity = severity_from_score(risk_score)
+
         # Build a provisional assessment for verdict resolution, then attach
         # structured demotion reason codes before persistence (ISSUE-241).
         # risk_score >= 70 still resolves to confirmed_threat first; evidence_limited
@@ -199,7 +211,7 @@ class RiskAgent(BaseAgent[RiskAgentInput, RiskAssessment]):
             possible_false_positive=possible_fp,
             scoring_mode=scoring_mode,
             evidence_limited=adjustment.evidence_limited,
-            severity_floor_applied=adjustment.severity_floor_applied,
+            severity_floor_applied=adjustment.severity_floor_applied or llm_source_floor_applied,
             source_risk_baseline=adjustment.source_risk_baseline,
             source_scale_unnormalized=adjustment.source_scale_unnormalized,
             high_source_evidence_limited=adjustment.high_source_evidence_limited,

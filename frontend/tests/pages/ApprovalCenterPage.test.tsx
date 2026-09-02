@@ -450,4 +450,41 @@ describe("ApprovalPage", () => {
     expect(screen.getByTestId("approval-card-disabled-act-role")).toHaveTextContent("无审批权限");
     expect(screen.queryByText("批准", { exact: true })).toBeNull();
   });
+
+  it("closes the modal and refreshes when approve times out waiting on resume", async () => {
+    const user = userEvent.setup();
+    mockStore.approve.mockRejectedValueOnce(
+      new ApiError({
+        error_code: "timeout",
+        error_message: "Request timed out",
+      }),
+    );
+    setStore({
+      pendingApprovals: [
+        {
+          action_id: "act-last",
+          event_id: "evt-test",
+          action_name: "isolate_host",
+          tool_name: "isolate_host",
+          action_level: "l3",
+          execution_phase: "immediate",
+          status: "waiting_approval",
+          plan_revision: 1,
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    });
+
+    renderPage();
+    await user.click(screen.getByText("批准", { exact: true }));
+    const dialog = await screen.findByRole("dialog", { name: "批准动作" });
+    await user.click(within(dialog).getByRole("button", { name: /批\s*准/ }));
+
+    expect(
+      await screen.findByText("批准已提交，后台仍在执行。队列将刷新，请以刷新后的状态为准。"),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mockStore.refreshEventIds).toHaveBeenCalled();
+    expect(mockStore.loadPendingApprovals).toHaveBeenCalled();
+  });
 });

@@ -41,16 +41,24 @@ interface ApprovalState {
   /** Monotonic generation for the global queue refresh — a slow poll response
    *  must not overwrite a newer refresh / socket update (ISSUE-207 review). */
   _queueGen: number;
+  /** First global fetch finished — later polls must not take over the page spinner. */
+  _queueHydrated: boolean;
 
   _pollTimer: ReturnType<typeof setInterval> | null;
   _globalSocketUnsub: (() => void) | null;
   _eventIds: string[];
 
   refreshEventIds: () => Promise<string[]>;
-  loadPendingApprovals: (eventIds?: string[]) => Promise<QueueRefreshResult>;
+  loadPendingApprovals: (
+    eventIds?: string[],
+    options?: { silent?: boolean },
+  ) => Promise<QueueRefreshResult>;
   /** Load one event's waiting_approval actions into the scoped state (deep link).
    *  Never touches the global queue / _eventIds. Resolves ok/failed. */
-  loadPendingApprovalsForEvent: (eventId: string) => Promise<QueueRefreshResult>;
+  loadPendingApprovalsForEvent: (
+    eventId: string,
+    options?: { silent?: boolean },
+  ) => Promise<QueueRefreshResult>;
   /** Clear the deep-link scope (call on page unmount); global queue untouched. */
   clearEventScope: () => void;
   /** Resolve to the backend ActionOperationResponse so callers can surface resume_status/degraded (ISSUE-207). */
@@ -128,6 +136,7 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
   eventScope: null,
   _eventGen: 0,
   _queueGen: 0,
+  _queueHydrated: false,
   _pollTimer: null,
   _globalSocketUnsub: null,
   _eventIds: [],
@@ -142,7 +151,7 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
     }
   },
 
-  async loadPendingApprovals(eventIds) {
+  async loadPendingApprovals(eventIds, options) {
     const ids = eventIds ?? get()._eventIds;
     if (ids.length === 0) {
       // Invalidate any in-flight non-empty refresh before clearing the queue so
@@ -155,11 +164,18 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
         pendingApprovals: [],
         loading: false,
         error: null,
+        _queueHydrated: true,
       }));
       return "ok";
     }
     const gen = get()._queueGen + 1;
-    set({ _queueGen: gen, loading: true, error: null, _eventIds: ids });
+    const silent = options?.silent === true || get()._queueHydrated;
+    set({
+      _queueGen: gen,
+      loading: silent ? get().loading : true,
+      error: null,
+      _eventIds: ids,
+    });
     const { perEvent, fulfilled, total } = await fetchWaitingApprovals(ids);
     // A newer refresh (poll, socket or 409 handling) superseded this one — drop
     // the stale result instead of overwriting newer state (ISSUE-207 review).
@@ -167,7 +183,11 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
     if (fulfilled === 0) {
       // Total failure: keep the previous queue instead of wiping it, and
       // report failure so callers (e.g. 409 handling) don't claim success.
-      set({ loading: false, error: `审批队列加载失败（${total} 个事件全部请求失败）` });
+      set({
+        loading: false,
+        error: `审批队列加载失败（${total} 个事件全部请求失败）`,
+        _queueHydrated: true,
+      });
       return "failed";
     }
     if (fulfilled < total) {
@@ -183,27 +203,29 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
         pendingApprovals: merged,
         loading: false,
         error: `部分事件加载失败（${total - fulfilled}/${total}）`,
+        _queueHydrated: true,
       });
       return "partial";
     }
     const all = perEvent
       .flatMap((e) => e.items)
       .sort((a, b) => (a.updated_at ?? "").localeCompare(b.updated_at ?? ""));
-    set({ pendingApprovals: all, loading: false, error: null });
+    set({ pendingApprovals: all, loading: false, error: null, _queueHydrated: true });
     return "ok";
   },
 
-  async loadPendingApprovalsForEvent(eventId) {
+  async loadPendingApprovalsForEvent(eventId, options) {
     const gen = get()._eventGen + 1;
     // Keep the previous scoped items on a re-load of the same event so a failed
     // refresh does not wipe approvals the operator could still act on. A scope
     // switch (different event) still clears the stale data (ISSUE-207 review).
     const sameScope = get().eventScope === eventId;
+    const silent = options?.silent === true;
     set({
       _eventGen: gen,
       eventScope: eventId,
       eventPendingApprovals: sameScope ? get().eventPendingApprovals : [],
-      eventLoading: true,
+      eventLoading: silent ? get().eventLoading : true,
       eventError: null,
     });
     try {
@@ -286,7 +308,7 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
 
     const timer = setInterval(() => {
       const ids = get()._eventIds;
-      if (ids.length > 0) void get().loadPendingApprovals(ids);
+      if (ids.length > 0) void get().loadPendingApprovals(ids, { silent: true });
     }, 10_000);
     set({ _pollTimer: timer });
   },

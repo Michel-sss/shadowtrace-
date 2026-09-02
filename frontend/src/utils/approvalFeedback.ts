@@ -1,7 +1,16 @@
 /** Approval decision feedback helpers (ISSUE-207). */
 
 import { message } from "antd";
+import { ApiError } from "../services/apiClient";
 import type { ActionOperationResponse } from "../types/action";
+
+/** Approve/reject already persisted; the HTTP call died waiting on graph resume. */
+export function isApprovalTransportTimeout(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    (err.error_code === "timeout" || err.error_code === "network_error")
+  );
+}
 
 function resumeFailureDetail(result: ActionOperationResponse): string {
   const detail = result.message?.trim();

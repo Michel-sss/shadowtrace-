@@ -43,8 +43,7 @@ const CANDIDATE_TYPE_COLORS: Record<MemoryReviewCandidateType, string> = {
 };
 
 const EXPECTED_TIMING_NOTE =
-  "结案（CLOSED）前通常仅见 profile 待审核（依赖 ISSUE-208 画像入队）；" +
-  "fp_rule / history_case 须在事件 CLOSED 后由 MemoryAgent 入队。";
+  "结案前通常只能看到实体画像；误报规则和历史案例要等事件结案后，由记忆沉淀入队。";
 
 function readSourceEventId(item: MemoryReviewItem): string | null {
   const payload = item.payload;
@@ -322,7 +321,7 @@ export default function KnowledgeReviewPage() {
           知识审核
         </Typography.Title>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          审查 MemoryAgent / ISSUE-208 入队的 pending 候选，人工确认后 promote 入库或 reject 拒绝。
+          审查待入库的知识候选，人工确认后入库或拒绝。
         </Typography.Paragraph>
       </div>
 
@@ -333,7 +332,7 @@ export default function KnowledgeReviewPage() {
         description={
           <ul style={{ margin: 0, paddingLeft: 20 }}>
             <li>{EXPECTED_TIMING_NOTE}</li>
-            <li>列表为空且尚无 ISSUE-208 画像入队时，不代表本页未实现。</li>
+            <li>列表为空是正常情况，不代表本页未实现。</li>
           </ul>
         }
         data-testid="knowledge-review-timing-note"
@@ -354,7 +353,7 @@ export default function KnowledgeReviewPage() {
           message={`按事件筛选：${eventIdFilter}`}
           description={
             visibleItems.length === 0
-              ? "该事件暂无 pending 候选（或 API 未返回相关记录）。"
+              ? "该事件暂无待审核候选（或接口未返回相关记录）。"
               : `显示 ${visibleItems.length} / ${total} 条候选。`
           }
           data-testid="knowledge-review-event-filter"
@@ -366,7 +365,7 @@ export default function KnowledgeReviewPage() {
           <Input
             allowClear
             aria-label="知识库筛选"
-            placeholder="按 kb_name 筛选（可选）"
+            placeholder="按知识库名称筛选（可选）"
             value={kbFilterInput}
             onChange={(event) => setKbFilterInput(event.target.value)}
             onPressEnter={() => setKbFilter(kbFilterInput.trim() || undefined)}
@@ -413,10 +412,10 @@ export default function KnowledgeReviewPage() {
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
                 description={
                   <Space direction="vertical" size={4}>
-                    <span>当前暂无 pending 候选</span>
+                    <span>当前暂无待审核候选</span>
                     <Typography.Text type="secondary">
-                      若 ISSUE-208 尚未入队画像，或尚无 CLOSED 事件触发 MemoryAgent，
-                      列表为空属预期。{EXPECTED_TIMING_NOTE}
+                      还没有实体画像入队、或还没有已结案事件触发记忆沉淀时，
+                      列表为空属于预期。{EXPECTED_TIMING_NOTE}
                     </Typography.Text>
                   </Space>
                 }
@@ -429,8 +428,8 @@ export default function KnowledgeReviewPage() {
             {eventIdFilter
               ? `显示 ${visibleItems.length} / ${total} 条待审核（已按事件筛选）`
               : `共 ${total} 条待审核`}
-            {hasProfileOnly ? "（当前均为 profile，符合 CLOSED 前预期）" : ""}
-            {hasClosedLoopTypes ? "（含须 CLOSED 后入队的 fp_rule / history_case）" : ""}
+            {hasProfileOnly ? "（当前均为实体画像，符合结案前预期）" : ""}
+            {hasClosedLoopTypes ? "（含须结案后入队的误报规则 / 历史案例）" : ""}
           </Typography.Text>
         )}
       </Card>

@@ -1,6 +1,6 @@
 import { Alert, Button, Card, Empty, Skeleton, Space, Tag, Typography } from "antd";
 import ReactECharts from "echarts-for-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getGraph } from "../../services/eventApi";
 import type {
   GraphEdge,
@@ -89,6 +89,8 @@ export default function EntityGraph({
   const [activePathNodeIds, setActivePathNodeIds] = useState<string[]>([]);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
   const [crossEventOverlayOn, setCrossEventOverlayOn] = useState(false);
+  const graphRef = useRef(graph);
+  graphRef.current = graph;
 
   const load = useCallback(async () => {
     if (controlled) {
@@ -101,12 +103,17 @@ export default function EntityGraph({
       setLoadState("ready");
       return;
     }
-    setLoadState("loading");
+    const hadGraph = graphRef.current != null;
+    if (!hadGraph) setLoadState("loading");
     try {
       const response = await getGraph(eventId);
       setGraph(response.data);
       setLoadState("ready");
     } catch {
+      if (hadGraph) {
+        setLoadState("ready");
+        return;
+      }
       setGraph(null);
       setLoadState("error");
     }

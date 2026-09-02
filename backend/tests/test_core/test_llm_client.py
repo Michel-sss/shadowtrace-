@@ -246,6 +246,44 @@ async def test_empty_content_falls_back_to_reasoning_content() -> None:
 
 
 @pytest.mark.asyncio
+async def test_json_mode_think_only_is_empty_content() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "glm-5.3",
+                "choices": [
+                    {
+                        "message": {"content": "<think>planning the six factors"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 8, "total_tokens": 12},
+            },
+        )
+
+    audit = InMemoryLLMCallAuditRecorder()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        with pytest.raises(LLMInvalidJSONError) as exc:
+            await OpenAICompatibleLLMClient(
+                base_url="https://ark.cn-beijing.volces.com/api/coding/v3",
+                api_key="test-key",
+                client=http_client,
+                primary_model="glm-5.3",
+                audit_recorder=audit,
+            ).chat(
+                MESSAGES,
+                event_id="evt-2026-think-only",
+                agent_name="RiskAgent",
+                prompt_key="risk_score",
+                json_mode=True,
+                response_model=TriagePayload,
+            )
+
+    assert exc.value.error_class == "empty_content"
+
+
+@pytest.mark.asyncio
 async def test_json_mode_disables_glm_thinking() -> None:
     calls: list[dict[str, Any]] = []
 
@@ -340,7 +378,7 @@ async def test_json_mode_repairs_invalid_output_once_and_parses_model() -> None:
         payload = json.loads(request.content)
         calls.append(payload)
         if len(calls) == 1:
-            return httpx.Response(200, json=_response("not-json", model=payload["model"]))
+            return httpx.Response(200, json=_response("{not-json", model=payload["model"]))
         return httpx.Response(
             200,
             json=_response(
@@ -375,7 +413,7 @@ async def test_json_mode_raises_after_exactly_one_failed_repair() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         nonlocal attempts
         attempts += 1
-        return httpx.Response(200, json=_response("still-invalid", model="primary-model"))
+        return httpx.Response(200, json=_response("{still-invalid", model="primary-model"))
 
     audit = InMemoryLLMCallAuditRecorder()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
@@ -763,6 +801,41 @@ async def test_base_timeout_bounds_injected_or_custom_transport() -> None:
             )
 
     assert [(entry.status, entry.fallback_level) for entry in audit.entries] == [("llm_timeout", 0)]
+
+
+@pytest.mark.asyncio
+async def test_per_call_timeout_overrides_httpx_client_timeout() -> None:
+    captured: list[object] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.extensions.get("timeout"))
+        return httpx.Response(
+            200,
+            json=_response("ok", model="primary-model"),
+            request=request,
+        )
+
+    audit = InMemoryLLMCallAuditRecorder()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        timeout=httpx.Timeout(90.0),
+    ) as http_client:
+        await _client(http_client, audit=audit, timeout_seconds=90.0).chat(
+            MESSAGES,
+            event_id="evt-2026-per-call-timeout",
+            agent_name="ReportAgent",
+            prompt_key="report_generate",
+            timeout=180.0,
+        )
+
+    assert captured
+    posted = captured[0]
+    assert posted is not None
+    if isinstance(posted, dict):
+        read_timeout = posted.get("read", posted.get("timeout"))
+    else:
+        read_timeout = getattr(posted, "read", posted)
+    assert float(read_timeout) == 180.0
 
 
 def test_fallback_chain_deduplicates_primary_and_repeated_models() -> None:

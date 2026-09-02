@@ -94,7 +94,7 @@ def test_in_band_prefers_rule_and_stays_off_center() -> None:
     assert "档位=exfil_over_c2" in reasoning
 
 
-def test_out_of_band_soft_pull_does_not_snap_to_center() -> None:
+def test_out_of_band_undershoot_lands_at_band_floor() -> None:
     choice = resolve_factor_choice(
         "attack_stage",
         {"rubric_id": "exfil_over_c2", "lean": "mid", "reason": "upload"},
@@ -102,8 +102,7 @@ def test_out_of_band_soft_pull_does_not_snap_to_center() -> None:
     assert choice is not None
     merged, reasoning = land_factor_score(20, choice)
     assert merged != choice.center
-    assert merged > 20
-    assert merged <= choice.lo
+    assert merged == choice.lo
     assert "区间外软拉" in reasoning
 
 

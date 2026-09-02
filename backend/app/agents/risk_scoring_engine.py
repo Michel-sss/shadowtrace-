@@ -9,8 +9,10 @@ from app.models.agent_io import (
     CollectionStatus,
     EvidenceOutput,
     GraphOutput,
+    LlmAdmissibility,
     RAGOutput,
     RiskFactor,
+    ScoringMode,
     TriageResult,
 )
 from app.models.enums import EventType, EvidenceSource, Severity
@@ -157,6 +159,13 @@ _ANOMALY_KEYWORDS: tuple[tuple[str, float], ...] = (
     ("upload", 30.0),
     ("exfil", 35.0),
     ("7z", 15.0),
+    ("ransomware", 55.0),
+    ("mimikatz", 50.0),
+    ("beacon", 50.0),
+    ("psexec", 40.0),
+    ("mstsc", 45.0),
+    ("3389", 35.0),
+    ("rdp", 30.0),
     ("unknown", 10.0),
     ("process_create", 10.0),
 )
@@ -330,6 +339,48 @@ def apply_severity_floor(
         floor_applied = True
 
     return adjusted_score, adjusted_severity, floor_applied
+
+
+def apply_llm_unavailable_source_floor(
+    *,
+    risk_score: int,
+    scoring_mode: ScoringMode,
+    llm_admissibility: LlmAdmissibility | None,
+    source_snapshot: dict[str, Any] | None,
+    possible_false_positive: bool,
+) -> tuple[int, bool]:
+    """Raise rule_only totals when structured scoring failed on a high-source alert.
+
+    Distinct from ``evidence_limited`` (that path demotes ``confirmed_threat``).
+    False-positive matches and low/medium source baselines are never lifted.
+    """
+    if possible_false_positive:
+        return risk_score, False
+    if scoring_mode is not ScoringMode.RULE_ONLY:
+        return risk_score, False
+    if llm_admissibility is not LlmAdmissibility.INVALID:
+        return risk_score, False
+
+    baseline, source_severity = extract_source_baseline(source_snapshot)
+    if _source_eligible_for_severity_floor(source_severity):
+        raw_floor = compute_score_floor(
+            source_baseline=baseline,
+            source_severity=source_severity,
+        )
+        if raw_floor is None:
+            floor = _HIGH_SOURCE_MIN_SCORE
+        else:
+            floor = max(raw_floor, _HIGH_SOURCE_MIN_SCORE)
+    elif baseline is not None and baseline >= _HIGH_SOURCE_MIN_SCORE:
+        floor = max(
+            _HIGH_SOURCE_MIN_SCORE,
+            int(round(baseline * SOURCE_BASELINE_FLOOR_RATIO)),
+        )
+    else:
+        return risk_score, False
+    if risk_score >= floor:
+        return risk_score, False
+    return max(0, min(100, floor)), True
 
 
 def resolve_confidence_cap(
@@ -560,6 +611,9 @@ class RiskScoringEngine:
             blob_parts.append(str(raw.get("cmdline") or "").lower())
             blob_parts.append(str(raw.get("action") or "").lower())
             blob_parts.append(item.evidence_type.lower())
+            blob_parts.append(str(raw.get("dst_port") or "").lower())
+            blob_parts.append(str(raw.get("protocol") or "").lower())
+            blob_parts.append(str(raw.get("dst_ip") or "").lower())
             if item.is_conflicting:
                 score += 10.0
                 hits.append("conflicting_evidence")
@@ -570,8 +624,10 @@ class RiskScoringEngine:
                 hits.append(keyword)
         score = min(100.0, score)
         if not hits:
-            return 15.0, "未见显著异常行为关键词，给基线分"
-        return score, "异常行为信号: " + ", ".join(dict.fromkeys(hits))
+            reason = "未见显著异常行为关键词，给基线分"
+            return 15.0, reason
+        reason = "异常行为信号: " + ", ".join(dict.fromkeys(hits))
+        return score, reason
 
     def _evidence_confidence(self, evidence_output: EvidenceOutput) -> tuple[float, str]:
         score = max(0.0, min(100.0, float(evidence_output.overall_confidence) * 100.0))

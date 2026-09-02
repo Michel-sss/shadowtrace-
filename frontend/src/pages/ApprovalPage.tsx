@@ -16,7 +16,7 @@ import ApprovalCard from "../components/approval/ApprovalCard";
 import ApprovalActionModal from "../components/approval/ApprovalActionModal";
 import { ApiError } from "../services/apiClient";
 import { isApprovalUiDisabled } from "../config/auth";
-import { showResumeFeedback } from "../utils/approvalFeedback";
+import { showResumeFeedback, isApprovalTransportTimeout } from "../utils/approvalFeedback";
 import type { Action } from "../types/action";
 
 const { Title, Text } = Typography;
@@ -121,33 +121,24 @@ export default function ApprovalPage() {
     const remainingBefore = eventId
       ? visibleApprovals.filter((a) => a.event_id === eventId).length
       : 0;
-    setSubmitting(true);
+    if (mode === "reject" && !body.comment?.trim()) {
+      message.error("拒绝必须填写原因");
+      throw new Error("reject comment required");
+    }
+    setModal({ open: false, actionId: null, mode: "approve" });
+    setSubmitting(false);
     try {
-      let result;
-      if (mode === "approve") {
-        result = await approve(actionId, body);
-      } else {
-        if (!body.comment?.trim()) {
-          message.error("拒绝必须填写原因");
-          throw new Error("reject comment required");
-        }
-        result = await reject(actionId, body);
-      }
-      setModal({ open: false, actionId: null, mode: "approve" });
+      const result =
+        mode === "approve" ? await approve(actionId, body) : await reject(actionId, body);
       showResumeFeedback(actionId, mode, result);
       if (eventId && remainingBefore > 1) {
         message.info("本事件仍有待审批动作，计划尚未全部决出。");
       }
     } catch (err: unknown) {
-      // approve/reject skip the apiClient interceptor toast; surface errors here.
       if (err instanceof ApiError && err.error_code === "approval_decision_conflict") {
-        // Another approver decided first — reload the queue instead of leaving
-        // the stale card for the operator to retry into 409s. In deep-link mode
-        // refresh the scoped event directly; otherwise the global queue.
-        setModal({ open: false, actionId: null, mode: "approve" });
         const refreshed = eventFilter
-          ? await loadPendingApprovalsForEvent(eventFilter)
-          : await refreshEventIds().then((ids) => loadPendingApprovals(ids));
+          ? await loadPendingApprovalsForEvent(eventFilter, { silent: true })
+          : await refreshEventIds().then((ids) => loadPendingApprovals(ids, { silent: true }));
         const messageText =
           refreshed === "ok"
             ? "该审批已由其他审批者处理，已刷新最新状态。"
@@ -159,15 +150,22 @@ export default function ApprovalPage() {
       }
       if (err instanceof ApiError && err.error_code === "forbidden") {
         message.error("无审批权限（403）：需要 approver 角色，请联系管理员授权。");
-      } else if (err instanceof ApiError) {
+        return;
+      }
+      if (isApprovalTransportTimeout(err)) {
+        message.warning("批准已提交，后台仍在执行。队列将刷新，请以刷新后的状态为准。");
+        if (eventFilter) {
+          await loadPendingApprovalsForEvent(eventFilter, { silent: true });
+        } else {
+          await refreshEventIds().then((ids) => loadPendingApprovals(ids, { silent: true }));
+        }
+        return;
+      }
+      if (err instanceof ApiError) {
         message.error(err.message || err.error_code || "审批操作失败");
-      } else if (!(err instanceof Error && err.message === "reject comment required")) {
+      } else {
         message.error("审批操作失败");
       }
-      // Re-throw so ApprovalActionModal keeps the reject reason / comment (ISSUE-207).
-      throw err;
-    } finally {
-      setSubmitting(false);
     }
   };
 

@@ -1853,6 +1853,25 @@ def test_llm_merge_preserves_template_enrichment_briefs() -> None:
     assert f"{ACTIONS_STATUS_SUMMARY_LABEL}:" in overview.content
 
 
+def test_merge_drops_schema_echo_placeholder() -> None:
+    builder = ReportSectionBuilder()
+    event_id = "evt-schema-echo"
+    sections = builder.build(
+        event_id=event_id,
+        evidence_output=_main_evidence(event_id),
+        risk_assessment=_high_risk(),
+        triage_result=_main_triage(),
+    )
+    draft = next(section for section in sections if section.key == "overview")
+    merged = ReportAgent(llm_client=None)._merge_sections(
+        sections,
+        {"overview": "markdown string", "severity_level": "markdown string"},
+    )
+    overview = next(section for section in merged if section.key == "overview")
+    assert "markdown string" not in overview.content
+    assert overview.content == draft.content
+
+
 def test_llm_failure_metadata_timeout_code() -> None:
 
     meta = llm_failure_metadata(TimeoutError())

@@ -75,7 +75,8 @@ async def event_chat(
             details={"event_id": event_id},
         )
     try:
-        return await qa_service.answer(event_id, request.question, request.history)
+        answer = await qa_service.answer(event_id, request.question, request.history)
+        return answer
     except KeyError as exc:
         raise ResourceNotFoundError(
             f"context for event {event_id} is not ready",

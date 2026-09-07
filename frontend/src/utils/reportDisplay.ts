@@ -27,13 +27,6 @@ const SEVERITY_LABELS: Record<string, string> = {
   critical: "严重",
 };
 
-const VERDICT_LABELS: Record<string, string> = {
-  none: "未判定",
-  possible_false_positive: "可能误报",
-  false_positive: "误报",
-  confirmed_threat: "已确认威胁",
-};
-
 export interface ReportDisplayContext {
   eventTitle?: string | null;
   entities?: EntitySet | null;

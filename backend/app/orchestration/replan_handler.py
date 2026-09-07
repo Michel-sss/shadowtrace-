@@ -395,9 +395,7 @@ async def _compensate_before_replan(
         if SAGA_COMPENSATION_INCOMPLETE_FLAG not in existing_degraded:
             existing_degraded.append(SAGA_COMPENSATION_INCOMPLETE_FLAG)
         return [], existing_degraded
-    serialized = await _persist_rollback_results(
-        event_id, list(results or []), working_memory
-    )
+    serialized = await _persist_rollback_results(event_id, list(results or []), working_memory)
     if _compensation_incomplete(list(results or [])):
         if SAGA_COMPENSATION_INCOMPLETE_FLAG not in existing_degraded:
             existing_degraded.append(SAGA_COMPENSATION_INCOMPLETE_FLAG)

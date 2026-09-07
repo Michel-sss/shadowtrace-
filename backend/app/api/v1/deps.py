@@ -10,6 +10,7 @@ circular imports with ``app.api.v1.schemas`` → ``app.services.context_service`
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends
@@ -550,10 +551,12 @@ async def get_disposition_source_service() -> Any:
     return _disposition_source
 
 
-def _make_planner_react_fill(stack: dict[str, Any]):
+def _make_planner_react_fill(
+    stack: dict[str, Any],
+) -> Callable[[str, dict[str, Any]], Awaitable[Any]]:
     """Bind investigation-stack ReAct fill for PlannerAgent LLM-failure recovery."""
 
-    async def _react_fill(event_id: str, context: dict[str, Any]):
+    async def _react_fill(event_id: str, context: dict[str, Any]) -> Any:
         from app.orchestration.react_fill import run_readonly_react_fill
 
         snapshot = context.get("source_snapshot")

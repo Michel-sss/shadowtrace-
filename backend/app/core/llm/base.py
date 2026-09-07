@@ -436,6 +436,7 @@ class BaseLLMClient(ABC):
         self.budget_service = budget_service
         self.message_budgeter = message_budgeter
         self.max_input_tokens = max_input_tokens
+        self._active_request_timeout: float | None = None
 
     async def chat(
         self,

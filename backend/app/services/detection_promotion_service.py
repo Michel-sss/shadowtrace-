@@ -839,17 +839,13 @@ class DetectionPromotionService:
     ) -> tuple[list[DetectionPromotionRecord], int]:
         filters = [DetectionPromotionORM.tenant_id == tenant_id]
         if candidate_detection_id:
-            filters.append(
-                DetectionPromotionORM.candidate_detection_id == candidate_detection_id
-            )
+            filters.append(DetectionPromotionORM.candidate_detection_id == candidate_detection_id)
         if status is not None:
             filters.append(DetectionPromotionORM.status == status.value)
         async with self._session_factory() as session:
             total = int(
                 await session.scalar(
-                    select(func.count())
-                    .select_from(DetectionPromotionORM)
-                    .where(*filters)
+                    select(func.count()).select_from(DetectionPromotionORM).where(*filters)
                 )
                 or 0
             )

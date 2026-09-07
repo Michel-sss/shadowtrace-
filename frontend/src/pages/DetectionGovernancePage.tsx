@@ -65,6 +65,16 @@ function packageIdFrom(artifact: DetectionEvaluationArtifact | null): string | u
   return typeof packageId === "string" && packageId.trim() ? packageId : undefined;
 }
 
+function describeLoadFailure(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.details?.reason === "tenant_scope_denied") {
+      return `当前账号租户无权访问制品租户 ${String(err.details.tenant_id ?? "")}。本地演示请改用 bootstrap-token（admin）。`;
+    }
+    return err.message || "加载失败";
+  }
+  return "请确认 confined 相对路径位于 data/evaluation 下。";
+}
+
 function formatRate(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) {
     return "—";
@@ -87,7 +97,8 @@ export default function DetectionGovernancePage() {
   const [promotions, setPromotions] = useState<DetectionPromotionRecord[]>([]);
   const [reasonNote, setReasonNote] = useState("");
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [relatedError, setRelatedError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [promotingId, setPromotingId] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<DetectionGovernanceDecision | null>(
@@ -103,23 +114,33 @@ export default function DetectionGovernancePage() {
         setDecisions([]);
         setCandidates([]);
         setPromotions([]);
+        setRelatedError(null);
         return;
       }
-      const [decisionRes, candidateRes, promotionRes] = await Promise.all([
-        listGovernanceDecisions({ tenant_id: tenant }),
-        listDetectionCandidates({ tenant_id: tenant, package_id: packageId }),
-        listPromotions({ tenant_id: tenant }),
-      ]);
-      setDecisions(decisionRes.data.items);
-      setCandidates(candidateRes.data.items);
-      setPromotions(promotionRes.data.items);
+      try {
+        const [decisionRes, candidateRes, promotionRes] = await Promise.all([
+          listGovernanceDecisions({ tenant_id: tenant }),
+          listDetectionCandidates({ tenant_id: tenant, package_id: packageId }),
+          listPromotions({ tenant_id: tenant }),
+        ]);
+        setDecisions(decisionRes.data.items);
+        setCandidates(candidateRes.data.items);
+        setPromotions(promotionRes.data.items);
+        setRelatedError(null);
+      } catch (err: unknown) {
+        setDecisions([]);
+        setCandidates([]);
+        setPromotions([]);
+        setRelatedError(describeLoadFailure(err));
+      }
     },
     [],
   );
 
   const loadArtifact = useCallback(async () => {
     setLoading(true);
-    setLoadError(false);
+    setLoadError(null);
+    setRelatedError(null);
     setEligibility(null);
     setGate(null);
     try {
@@ -129,10 +150,10 @@ export default function DetectionGovernancePage() {
       setLoadedPath(response.data.path);
       setTenantId(nextArtifact.tenant_id);
       await loadRelated(nextArtifact.tenant_id, packageIdFrom(nextArtifact));
-    } catch {
+    } catch (err: unknown) {
       setArtifact(null);
       setLoadedPath(null);
-      setLoadError(true);
+      setLoadError(describeLoadFailure(err));
     } finally {
       setLoading(false);
     }
@@ -434,12 +455,22 @@ export default function DetectionGovernancePage() {
           type="error"
           showIcon
           message="制品加载失败"
-          description="请确认 confined 相对路径位于 data/evaluation 下。"
+          description={loadError}
           action={
             <Button data-testid="detection-governance-retry" onClick={() => void loadArtifact()}>
               重试
             </Button>
           }
+        />
+      )}
+
+      {relatedError && !loadError && (
+        <Alert
+          type="warning"
+          showIcon
+          data-testid="related-load-error"
+          message="决策/候选列表加载失败"
+          description={relatedError}
         />
       )}
 

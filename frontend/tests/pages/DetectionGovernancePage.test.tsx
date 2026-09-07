@@ -187,6 +187,22 @@ describe("DetectionGovernancePage", () => {
     expect(screen.getByText("100%")).toBeInTheDocument();
   });
 
+  it("keeps the artifact when decision list is tenant-denied", async () => {
+    mockListDecisions.mockRejectedValue(
+      new ApiError({
+        error_code: "not_found",
+        error_message: "detection governance decision not found",
+        details: { tenant_id: "tenant-detection-eval", reason: "tenant_scope_denied" },
+      }),
+    );
+    renderPage();
+    expect(await screen.findByTestId("artifact-summary")).toBeInTheDocument();
+    expect(screen.getByTestId("related-load-error")).toHaveTextContent(
+      "当前账号租户无权访问制品租户 tenant-detection-eval",
+    );
+    expect(screen.queryByText("制品加载失败")).not.toBeInTheDocument();
+  });
+
   it("assesses eligibility", async () => {
     const user = userEvent.setup();
     renderPage();

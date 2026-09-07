@@ -68,7 +68,7 @@ export function listGovernanceDecisions(params: {
 }) {
   return apiClient.get<DetectionGovernanceDecisionListResponse>(
     "/detection/governance/decisions",
-    { params },
+    { params, skipGlobalErrorToast: true },
   );
 }
 

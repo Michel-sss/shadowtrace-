@@ -90,8 +90,6 @@ function entityLabels(
         return entity.name || entity.command_line || entity.entity_id;
       case "file":
         return entity.path || entity.name || entity.hash || entity.entity_id;
-      default:
-        return entity.entity_id;
     }
   }).filter(Boolean);
 }

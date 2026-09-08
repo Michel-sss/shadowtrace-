@@ -714,7 +714,7 @@ class BaseLLMClient(ABC):
                     status = "llm_provider_error"
                     error = LLMProviderError("LLM post-processing failed")
                     error.__cause__ = exc
-                await _persist_attempt_audit()
+            await _persist_attempt_audit()
             if error is not None:
                 raise error
             assert raw is not None

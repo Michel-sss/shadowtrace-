@@ -574,6 +574,19 @@ def _make_planner_react_fill(
     return _react_fill
 
 
+def _require_stack_dep(stack: dict[str, Any], key: str, label: str) -> Any:
+    """Fail closed with ConfigurationError when investigation DI is missing."""
+    from app.core.errors import ConfigurationError
+
+    value = stack.get(key)
+    if value is None:
+        raise ConfigurationError(
+            f"production investigation graph miswired — missing dependencies: {label}",
+            details={"missing": label},
+        )
+    return value
+
+
 async def _build_production_investigation_graph(
     *,
     planner_agent: Any,
@@ -588,6 +601,7 @@ async def _build_production_investigation_graph(
     stack = await _get_investigation_stack()
     wm = stack["wm"]
     event_bus = _get_event_bus()
+    memory_agent = _require_stack_dep(stack, "memory", "memory_agent")
     from app.adapters.sangfor.capability_manifest import response_agent_overrides_for_kind
 
     settings = get_settings()
@@ -630,7 +644,7 @@ async def _build_production_investigation_graph(
         "verify_agent": verify_agent,
         "rag_agent": stack["rag"],
         "graph_agent": stack["graph_agent"],
-        "memory_agent": stack["memory"],
+        "memory_agent": memory_agent,
     }
     services = {
         "state_machine": stack["state_machine"],
@@ -667,6 +681,7 @@ async def _build_production_investigation_graph(
             ("action_execution", services["action_execution"]),
             ("disposition_sync", services["disposition_sync"]),
             ("event_disposition", services["event_disposition"]),
+            ("memory_agent", memory_agent),
         )
         if dep is None
     ]
@@ -1137,6 +1152,7 @@ async def get_pipeline() -> Any:
         from app.services.analysis_only_pipeline import AnalysisOnlyPipeline
 
         stack = await _get_investigation_stack()
+        memory_agent = _require_stack_dep(stack, "memory", "memory_agent")
         _pipeline = AnalysisOnlyPipeline(
             event_service=stack["event_service"],
             state_machine=stack["state_machine"],
@@ -1151,7 +1167,7 @@ async def get_pipeline() -> Any:
             working_memory=stack["wm"],
             degraded_flags=stack["degraded_flags"],
             settings=stack["settings"],
-            memory_agent=stack["memory"],
+            memory_agent=memory_agent,
             agent_task_service=_get_agent_task_service(),
             agent_artifact_service=_get_agent_artifact_service(),
             content_projection_service=_get_content_projection_service(),
@@ -1186,6 +1202,7 @@ async def get_super_agent() -> Any:
         stack = await _get_investigation_stack()
         settings = stack["settings"]
         wm = stack["wm"]
+        memory_agent = _require_stack_dep(stack, "memory", "memory_agent")
 
         planner = PlannerAgent(
             llm_client=stack["llm_client"],
@@ -1223,7 +1240,7 @@ async def get_super_agent() -> Any:
             react_executor_factory=stack["react_executor_factory"],
             react_llm_client=stack["llm_client"],
             investigation_graph=investigation_graph,
-            memory_agent=stack["memory"],
+            memory_agent=memory_agent,
             audit_service=_get_audit_log(),
             graph_agent=stack["graph_agent"],
             storyline_service=stack["storyline_service"],

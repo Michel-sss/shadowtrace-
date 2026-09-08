@@ -24,9 +24,7 @@ logger = logging.getLogger(__name__)
 
 DETECTION_GOVERNANCE_POLICY_VERSION = "issue125_v1"
 DETECTION_GOVERNANCE_POLICY_SOURCE = "detection_governance_policy_v1"
-DEFAULT_POLICY_PATH = (
-    REPO_ROOT / "data" / "governance" / "detection_governance_policy_v1.json"
-)
+DEFAULT_POLICY_PATH = REPO_ROOT / "data" / "governance" / "detection_governance_policy_v1.json"
 REQUIRED_GOVERNANCE_METRIC_IDS = frozenset({"threat_recall", "benign_specificity"})
 
 

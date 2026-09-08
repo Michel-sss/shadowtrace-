@@ -84,9 +84,7 @@ def test_evaluation_repo_root_contains_evaluation_data() -> None:
     assert (REPO_ROOT / "data" / "evaluation").is_dir()
     assert (REPO_ROOT / "data" / "governance" / "detection_governance_policy_v1.json").is_file()
     assert EVALUATION_MANIFEST_ROOT == (REPO_ROOT / "data" / "evaluation").resolve()
-    assert (
-        EVALUATION_MANIFEST_ROOT / "detection_shadow_v1" / "baseline_artifact.json"
-    ).is_file()
+    assert (EVALUATION_MANIFEST_ROOT / "detection_shadow_v1" / "baseline_artifact.json").is_file()
 
 
 def test_development_rejects_disposition_mode_live_without_xdr_suffix() -> None:
